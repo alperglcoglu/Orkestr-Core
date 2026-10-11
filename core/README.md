@@ -7,9 +7,9 @@ against a schema before it changes anything, and the core runs the tests itself.
 
 The binding scope is [`PHASE3_IMPLEMENTATION.md`](../PHASE3_IMPLEMENTATION.md).
 
-> **Status:** implemented and tested with a scripted (fake) executor. The Claude Code
-> executor is built and unit-tested, but it has **not yet been run against a real model**
-> (work-order step 4). Until then, treat live runs as experimental.
+> **Status:** implemented, tested with a scripted executor (134 tests), and validated live:
+> one full run on the Phase 2 `split` project completed 3 tasks in 11 agent calls with no
+> founder question (see `phase2/FINDINGS.md`, run 3).
 
 ## How it differs from the plugin
 
@@ -133,16 +133,10 @@ node --test plugins/orkestr/tests/
 
 ## Known limitations
 
-- The live Claude Code executor has not been run yet. Two behaviors of Claude Code 2.1.295
-  in print mode are unverified:
-  - whether `--max-turns` is honored (the core's timeout applies regardless);
-  - the exact shape of usage-limit errors.
-
-  Until they are verified, the core treats any error that mentions a limit as a usage limit
-  and stops.
-- Agent calls use `--restricted`, so the repository's own `.claude/settings.json` (and your
-  user settings) are ignored. Whether that mode keeps the subscription sign-in working is
-  verified in the first live call.
+- Verified with Claude Code 2.1.295: the subscription sign-in works with `--restricted`,
+  `--max-turns` is honored, and disallowed tool calls are denied and reported. The exact
+  shape of a usage-limit error has not been observed yet. Until it is, any error that
+  mentions a limit is treated as a usage limit, and the run stops.
 - Only one project per database and one local founder. There are no user accounts.
 - Meetings are held for recovery and for design questions raised by an implementer. Other
   MASTER_SPEC §6.1 triggers are not detected automatically yet.
