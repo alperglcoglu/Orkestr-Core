@@ -289,7 +289,7 @@ On Node 22+, pass the files instead of the folder (a folder argument is treated 
 node --test "plugins/orkestr/tests/*.test.mjs"
 ```
 
-Last run: **70 tests, 70 passed** (Windows 11, Node 20.11.1). Autonomy tests are in `tests/autonomy.test.mjs`, parallel-work tests in `tests/parallel.test.mjs`.
+Last run: **71 tests, 71 passed** (Linux, Node 22.22.0; earlier runs on Windows 11, Node 20.11.1). Autonomy tests are in `tests/autonomy.test.mjs`, parallel-work tests in `tests/parallel.test.mjs`.
 
 Coverage:
 - project initialization and refusing to overwrite;

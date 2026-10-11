@@ -58,7 +58,10 @@ export function decide(input) {
     const command = typeof ti.command === 'string' ? ti.command : '';
     // A single state-tool invocation only records text (e.g. --action "git push"); it never runs it.
     // Chained commands are still checked against every rule.
-    const stateToolOnly = /orkestr\.mjs/.test(command) && !/[;&|`\n]|\$\(/.test(command);
+    // Quoted arguments (e.g. --risks "a; b") are text, so they are blanked before looking for chaining.
+    const unquoted = command.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""');
+    const stateToolOnly =
+      /^\s*node(\.exe)?\s+("[^"]*orkestr\.mjs"|'[^']*orkestr\.mjs'|\S*orkestr\.mjs)(\s|$)/.test(command) && !/[;&|`\n]|\$\(/.test(unquoted);
     const rules = stateToolOnly ? RULES.slice(0, 1) : RULES;
     const hit = rules.find((r) => r.test(command));
     if (hit) return `Orkestr guard: ${hit.why}. Founder confirmation required (MASTER_SPEC §10.2).`;

@@ -63,6 +63,7 @@ function section(title) {
   const open = tasks.filter((t) => !['COMPLETED', 'CANCELLED'].includes(t.status));
   if (tasks.length && !open.length) s.ok('Every task is closed');
   else if (open.length) s.warn(`Open tasks: ${open.map((t) => `${t.id} ${t.status}`).join(', ')}`);
+  if (tasks.length && !tasks.some((t) => t.source?.type === 'plan')) s.warn('No task came from a plan import (the plan step created no tasks)');
   fs.existsSync(path.join(dir, 'requirements', 'prd.md')) ? s.ok('PRD written') : s.warn('No requirements/prd.md');
   for (const t of tasks.filter((x) => x.status === 'FAILED')) s.fail(`${t.id} FAILED: ${t.failure?.error ?? '?'} → ${t.failure?.next_action ?? '?'}`);
 }
@@ -130,7 +131,7 @@ function section(title) {
       }
     }
     if (m.outcome === 'DECIDED' && !m.recovery_for && !(m.task_ids ?? []).length) s.warn(`${m.id}: decided but produced no tasks`);
-    if (m.outcome === 'DECIDED' && !(m.dissent ?? []).length && positions.size > 1) s.warn(`${m.id}: positions differed but no dissent was recorded`);
+    if (m.outcome === 'DECIDED' && !(m.dissent ?? []).length && positions.size > 1) s.info(`${m.id}: positions were worded differently and no dissent was recorded — check by hand whether a real objection was dropped`);
     for (const earlier of decisions.filter((x) => x.id < (m.decision_id ?? '') && x.approval_status === 'APPROVED')) {
       const sim = jaccard(new Set(earlier.question.toLowerCase().split(/\W+/)), new Set((d?.question ?? '').toLowerCase().split(/\W+/)));
       if (sim > 0.6) s.warn(`${m.id} may reopen ${earlier.id} ("${earlier.question}")`);
@@ -183,6 +184,11 @@ function section(title) {
     if (!outside.length) s.ok('Every changed file belongs to some task scope');
     else (unscopedTask ? s.warn : s.fail)(`Files outside every task scope: ${outside.join(', ')}${unscopedTask ? ' (an unscoped task ran, so this may be fine)' : ''}`);
   }
+  for (const r of reviews) {
+    const owner = byId.get(r.task_id)?.owner;
+    if ((r.reviewers ?? []).includes('orchestrator')) s.warn(`${r.id}: reviewed by the orchestrator, not by an independent reviewer agent`);
+    else if (owner && owner !== 'qa-engineer' && (r.reviewers ?? []).includes(owner)) s.warn(`${r.id}: the task owner (${owner}) reviewed its own task`);
+  }
   if (!s.failures()) s.ok('Dependencies resolve and were respected; completions carry evidence');
 }
 
@@ -190,7 +196,11 @@ function section(title) {
 {
   const s = section('5. Generated code verifiable');
   const cmds = new Map();
-  for (const t of tasks) for (const e of t.evidence ?? []) if (e.command && ['test', 'check'].includes(e.type)) cmds.set(e.command, { task: t.id, result: e.result });
+  for (const t of tasks) {
+    for (const e of t.evidence ?? []) {
+      if (e.command && ['test', 'check'].includes(e.type) && !e.command.startsWith('orkestr ')) cmds.set(e.command, { task: t.id, result: e.result });
+    }
+  }
   if (!cmds.size) s.fail('No executed test/check command was recorded');
   for (const [cmd, rec] of cmds) {
     if (!rerun) {

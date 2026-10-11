@@ -373,7 +373,7 @@ export function scopeCheck(state, files, taskId = null) {
     addEvidence(state, target.id, {
       type: 'check',
       result: violations.length ? 'failed' : 'passed',
-      command: 'orkestr scope check',
+      command: SCOPE_CHECK_COMMAND,
       summary: violations.length
         ? `Out-of-scope changes: ${violations.map((v) => v.file).join(', ')}`
         : `All ${rows.length} changed file(s) are inside the task scope`,
@@ -393,12 +393,15 @@ export function startProblems(state, task, running) {
   return problems;
 }
 
+// Scope checks are bookkeeping, not verification: they never satisfy the "passed check" rule.
+export const SCOPE_CHECK_COMMAND = 'orkestr scope check';
+
 export function completionProblems(task) {
   const problems = [];
   const ev = task.evidence;
-  const verification = ev.filter((e) => ['test', 'check', 'manual'].includes(e.type));
+  const verification = ev.filter((e) => ['test', 'check', 'manual'].includes(e.type) && e.command !== SCOPE_CHECK_COMMAND);
   if (!verification.some((e) => e.result === 'passed')) {
-    problems.push('no passed test, check, or manual-verification evidence');
+    problems.push('no passed test, check, or manual-verification evidence (a scope check does not count)');
   }
   const lastCheck = ev.filter((e) => ['test', 'check'].includes(e.type) && e.result !== 'not_run').at(-1);
   if (lastCheck?.result === 'failed') problems.push('the latest test/check failed');

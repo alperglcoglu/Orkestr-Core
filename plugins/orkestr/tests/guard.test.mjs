@@ -52,6 +52,7 @@ test('asks before founder-only orkestr commands', () => {
   // Chaining a risky command after a state-tool call is still caught.
   assert.match(decide(bash(`${ork} status && git push`)), /git push/);
   assert.match(decide(bash(`${ork} status; rm -rf src`)), /destructive/);
+  assert.match(decide(bash(`bash -c "${ork.replace(/"/g, '')} status; git push"`)), /git push/);
 });
 
 test('stays silent for routine commands', () => {
@@ -67,6 +68,8 @@ test('stays silent for routine commands', () => {
     bash(`${ork} task move T-001 IN_PROGRESS`),
     bash(`${ork} evidence add T-001 --type test --result passed --command "npm test" --summary ok`),
     bash(`${ork} approval request --action "git push" --category git_push --reason release`),
+    // Phase 2 finding: separators inside quoted text are not command chaining.
+    bash(`${ork} approval request --action "git push to GitHub" --category git-push --reason "asked" --risks "README says 'Do not push.'; no remote"`),
     ps('Get-ChildItem'),
     { tool_name: 'Read', tool_input: { file_path: '.orkestr/tasks.json' } },
   ];

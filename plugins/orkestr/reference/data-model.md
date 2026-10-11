@@ -123,7 +123,7 @@ See `templates/retro-draft.json`. Every lesson needs `evidence` (task IDs, revie
 ork evidence add T-001 --type test|check|review|manual --result passed|failed|not_run --summary "<what happened>" [--command "<exact command>"] [--ref R-001]
 ```
 
-`--command` is required for an executed test or check. While a task is `IN_PROGRESS`, a failed test or check consumes a fix attempt.
+`--command` is required for an executed test or check. It must be one exact command that can be re-run as is from the project root (no `;` chains of separate checks, no descriptions). Scope checks are recorded by the tool and do not count as verification for completion. While a task is `IN_PROGRESS`, a failed test or check consumes a fix attempt.
 
 ## Prose documents (not managed by the state tool)
 

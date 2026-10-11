@@ -20,7 +20,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/reference/policies.md` first and follow it. `ork <ar
    - For a scope review (no task), the result is recorded without changing any task.
 2. **Collect the change.** Use `git diff` / `git status` when Git is available. Otherwise use the files listed in the task evidence and the build report. Note what you could not determine.
 3. **Choose reviewers.**
-   - `qa-engineer`: always, for a task review.
+   - `qa-engineer`: always, for a task review. The review must come from a **separate `orkestr:qa-engineer` call**, not from the orchestrator and not from the agent that wrote the code. If you cannot call it (budget or usage limit), record the review with `"reviewers": ["orchestrator"]` and say in the report that the review was not independent.
    - `security-reviewer`: when the change touches authentication or authorization, user input, file, shell, or network operations, secrets or configuration, or dependencies — or when the founder asks.
    - Give each reviewer the task, its acceptance criteria, the changed files or diff, and the instruction to return its standard report.
 4. **Verify the reviewers' claims yourself:**
@@ -28,7 +28,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/reference/policies.md` first and follow it. `ork <ar
    - otherwise `suspected`;
    - never upgrade a suspected finding without evidence.
 
-   `checks_run` lists only commands that actually ran, with their real results. Re-run a key check yourself when an agent's claim matters for the verdict.
+   `checks_run` lists only commands that actually ran, with their real results, one exact re-runnable command per entry (no `;` chains, no descriptions). Re-run a key check yourself when an agent's claim matters for the verdict.
 5. **Choose the verdict:**
    - `PASS`: acceptance criteria met, and no confirmed critical or high finding;
    - `CHANGES_REQUESTED`: fixable problems;
