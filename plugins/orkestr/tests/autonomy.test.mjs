@@ -207,3 +207,20 @@ test('completion report lists work done, checks that ran, assumptions, and open 
   assert.match(out, /## Unresolved[\s\S]*T-002 READY/);
   assert.match(out, /## Needs the founder[\s\S]*Nothing\./);
 });
+
+test('a decided meeting can steer existing tasks via applies_to instead of creating new ones (Phase 2 finding)', (t) => {
+  const p = bounded(t);
+  p.ok('plan', 'import', p.draft('plan.json', twoTaskPlan));
+  const r = p.ok('meeting', 'record', p.draft('m.json', meetingDraft({ action_items: [], applies_to: ['T-001'] })));
+  assert.doesNotMatch(r.out, /Created T-/);
+  assert.equal(p.read('tasks.json').tasks.length, 2, 'no new task');
+  assert.equal(p.read('decisions/D-001.json').approval_status, 'APPROVED');
+  assert.match(p.task('T-001').notes.at(-1).text, /^D-001: /);
+  p.ok('validate');
+
+  const none = p.run('meeting', 'record', p.draft('m2.json', meetingDraft({ action_items: [] })));
+  assert.equal(none.code, 1);
+  assert.match(none.err, /at least one action item, or "applies_to"/);
+  const unknown = p.run('meeting', 'record', p.draft('m3.json', meetingDraft({ action_items: [], applies_to: ['T-099'] })));
+  assert.match(unknown.err, /unknown task T-099/);
+});

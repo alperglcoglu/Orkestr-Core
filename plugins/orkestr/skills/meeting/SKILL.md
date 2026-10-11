@@ -64,7 +64,7 @@ Hold round 2 only if a **material** disagreement remains and new information cou
 - **ESCALATED:** a material disagreement remains, or the decision is the founder's to make (strategy, cost, risk acceptance). Do not select an option.
 - **NO_DECISION:** not enough information. Record the open questions.
 - Never invent consensus. Never drop a material objection.
-- For DECIDED, write **action items**: owner role, acceptance criteria, `depends_on` (use `"#n"` for other items), a file `scope` for implementation items (same rules as plan tasks), and `requires_approval` for restricted actions. If the action item changes work an existing task already covers, add it as a note on that task (`ork task note`) instead of creating an overlapping task.
+- For DECIDED, write **action items**: owner role, acceptance criteria, `depends_on` (use `"#n"` for other items), a file `scope` for implementation items (same rules as plan tasks), and `requires_approval` for restricted actions. If the decision only changes how existing open tasks are done, set `"applies_to": ["T-xxx", ...]` and leave `action_items` empty: the approved decision is added to those tasks as a note, and no overlapping task is created.
 - Record **dissent** for every material difference in reasoning or conditions, even when participants picked the same option (for example "would choose O2 if a payer field is added").
 
 ## 6. Record

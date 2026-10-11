@@ -81,7 +81,7 @@ See `templates/meeting-draft.json`.
 - `participants`: 2–4 entries of `{role, responsibility}`.
 - `rounds`: 1–2 entries, numbered from 1; every contribution `role` must be a participant.
 - `outcome` is one of:
-  - `DECIDED`: needs `decision.selected_option` (an option `id`), `decision.question`, `decision.rationale`, and at least one action item;
+  - `DECIDED`: needs `decision.selected_option` (an option `id`), `decision.question`, `decision.rationale`, and at least one action item or `applies_to`;
   - `ESCALATED`: `decision.selected_option` must be null, at least 2 options;
   - `NO_DECISION`: no action items.
 - `action_items` use the same fields as plan tasks. `depends_on` may use `"#n"` for other action items.
@@ -89,6 +89,7 @@ See `templates/meeting-draft.json`.
 Autonomy-related meeting fields:
 
 - `decision.founder_required` (optional, boolean): set it to true for founder-level matters (policies §0). Under bounded autonomy, a DECIDED meeting **without** this flag is auto-approved by the orchestrator and its tasks are authorized immediately.
+- `applies_to` (optional, a list of open task IDs): the tasks a DECIDED meeting steers. With it, `action_items` may be empty; once the decision is approved it is added to each of those tasks as a note.
 - `recovery_for` (optional, a task ID): marks a recovery meeting for a FAILED task that hit its fix-attempt limit. Each task can have one. Action items are optional. An approved decision reopens the task (READY, fix attempts reset) and adds the chosen approach as a task note. ESCALATED or NO_DECISION hands the task to the founder.
 
 ## Shared notes and assumptions

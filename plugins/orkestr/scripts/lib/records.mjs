@@ -11,6 +11,7 @@ import {
   autonomyOf,
   createTasks,
   emit,
+  addNote,
   getTask,
   maxRecoveryMeetings,
   nextId,
@@ -69,6 +70,15 @@ export function validateMeetingDraft(draft, state) {
       e.push(`recovery_for: ${recoveryFor} already used its ${maxRecoveryMeetings(state)} recovery meeting(s); the founder must decide`);
     }
   }
+  const appliesTo = draft.applies_to ?? [];
+  if (!Array.isArray(appliesTo) || !appliesTo.every((id) => typeof id === 'string')) e.push('"applies_to" must be a list of task IDs');
+  else {
+    for (const id of appliesTo) {
+      const task = state.tasks.find((t) => t.id === id);
+      if (!task) e.push(`applies_to: unknown task ${id}`);
+      else if (TERMINAL.includes(task.status)) e.push(`applies_to: ${id} is ${task.status}; a decision can only steer open tasks`);
+    }
+  }
   if (draft.decision?.founder_required !== undefined && typeof draft.decision.founder_required !== 'boolean') {
     e.push('decision.founder_required must be true or false');
   }
@@ -118,7 +128,9 @@ export function validateMeetingDraft(draft, state) {
     if (!d || !str(d.question) || !str(d.rationale)) e.push('DECIDED requires decision.question and decision.rationale');
     if (options.length < 1) e.push('DECIDED requires at least one option');
     if (d && !optionIds.includes(d.selected_option)) e.push('decision.selected_option must be one of the option ids');
-    if (!items.length && recoveryFor === null) e.push('DECIDED requires at least one action item (decisions must become tasks)');
+    if (!items.length && recoveryFor === null && !(Array.isArray(appliesTo) && appliesTo.length)) {
+      e.push('DECIDED requires at least one action item, or "applies_to" with the open tasks the decision steers');
+    }
   }
   if (draft.outcome === 'ESCALATED') {
     const d = draft.decision;
@@ -166,6 +178,7 @@ export function recordMeeting(state, draft) {
     dissent: draft.dissent ?? [],
     open_questions: draft.open_questions ?? [],
     task_ids: tasks.map((t) => t.id),
+    applies_to: draft.applies_to ?? [],
   };
   queueRecord(state, 'meetings', meeting, renderMeeting(meeting));
   emit(state, {
@@ -198,6 +211,7 @@ export function recordMeeting(state, draft) {
       meeting_id: meetingId,
       recovery_for: recoveryFor,
       task_ids: meeting.task_ids,
+      applies_to: meeting.applies_to,
       decided_by: null,
       decided_at: null,
       note: null,
@@ -212,6 +226,7 @@ export function recordMeeting(state, draft) {
       decision.note = 'Auto-approved under bounded autonomy (routine technical decision).';
       emit(state, { type: 'decision.approve', actor: 'orchestrator', entity: decisionId, from: 'PROPOSED', to: 'APPROVED', summary: decision.note });
       authorize(state, tasks, { actor: 'orchestrator', via: `${decisionId} (bounded autonomy)` });
+      noteAppliedDecision(state, decision, 'orchestrator');
     }
     queueRecord(state, 'decisions', decision, renderDecision(decision));
   }
@@ -229,6 +244,14 @@ export function recordMeeting(state, draft) {
     }
   }
   return { meeting, decision, tasks };
+}
+
+// A decision that steers existing tasks reaches them as task notes instead of new tasks.
+function noteAppliedDecision(state, d, author) {
+  for (const id of d.applies_to ?? []) {
+    const task = state.tasks.find((t) => t.id === id);
+    if (task && !TERMINAL.includes(task.status)) addNote(state, id, { author, text: `${d.id}: ${approachOf(d)}` });
+  }
 }
 
 function approachOf(d) {
@@ -277,6 +300,7 @@ export function decideDecision(state, id, action, { by, option = null, note = nu
   if (action === 'approve') {
     authorize(state, tasks, { actor: by, via: id });
     if (d.recovery_for) recoverTask(state, d.recovery_for, { decisionId: id, approach: approachOf(d), actor: by });
+    noteAppliedDecision(state, d, 'founder');
   } else {
     for (const t of tasks) {
       if (TERMINAL.includes(t.status) || t.status === 'IN_PROGRESS' || t.status === 'REVIEW') continue;

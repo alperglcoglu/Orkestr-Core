@@ -35,3 +35,14 @@ Setup: Claude Code 2.1.296, Sonnet, Windows, bounded autonomy, sandbox without a
 - Fixes 3–8 are instructions, not code; they need a second run to confirm.
 - Total agent calls and token usage are still not recorded by Orkestr.
 - `ork init` refuses when `.orkestr/` already has files (for example a draft written before init); not seen in this run.
+
+## Run 2 — same project, after the run 1 fixes (2026-10-11)
+
+Scorecard: no ❌. PRD written, all 4 tasks scoped and COMPLETED, every changed file inside a task scope, two tasks built in parallel, 4 independent QA reviews, all 6 recorded commands re-ran green (42 tests). 11 agent calls in total.
+
+| # | Problem | Severity | Fix |
+| :- | :- | :- | :- |
+| 10 | A DECIDED meeting had to create at least one task, so a decision that only steered existing tasks added a redundant task (and broke the 3-task cap) | Medium | Meeting drafts accept `applies_to` (open task IDs); the approved decision becomes a note on those tasks and no task is created (test added) |
+| 11 | Scorecard warns that both participants took the same position | Info | Expected here: the meeting was forced by the test protocol. Kept as a warning because in real runs it signals an unnecessary meeting |
+
+Fixes 3–8 from run 1 are confirmed by this run.

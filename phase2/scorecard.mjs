@@ -130,7 +130,7 @@ function section(title) {
           : s.ok(`${m.id}: ${c2.role} added new content in round 2 (overlap ${sim.toFixed(2)})`);
       }
     }
-    if (m.outcome === 'DECIDED' && !m.recovery_for && !(m.task_ids ?? []).length) s.warn(`${m.id}: decided but produced no tasks`);
+    if (m.outcome === 'DECIDED' && !m.recovery_for && !(m.task_ids ?? []).length && !(m.applies_to ?? []).length) s.warn(`${m.id}: decided but produced no tasks`);
     if (m.outcome === 'DECIDED' && !(m.dissent ?? []).length && positions.size > 1) s.info(`${m.id}: positions were worded differently and no dissent was recorded — check by hand whether a real objection was dropped`);
     for (const earlier of decisions.filter((x) => x.id < (m.decision_id ?? '') && x.approval_status === 'APPROVED')) {
       const sim = jaccard(new Set(earlier.question.toLowerCase().split(/\W+/)), new Set((d?.question ?? '').toLowerCase().split(/\W+/)));
