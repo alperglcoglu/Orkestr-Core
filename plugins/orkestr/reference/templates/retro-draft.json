@@ -1,0 +1,12 @@
+{
+  "scope": "Milestone 1: todo API and list UI",
+  "went_well": ["Plan had 3 tasks and all completed (T-001..T-003)"],
+  "went_badly": ["T-002 needed 2 fix attempts because of flaky time-dependent tests"],
+  "incorrect_assumptions": ["Assumed no input limits were needed (R-001 finding)"],
+  "decomposition_assessment": "Appropriate: tasks were small and dependencies held.",
+  "meeting_assessment": "M-001 changed the storage decision from JSON to SQLite; useful.",
+  "lessons": [
+    { "lesson": "Freeze time in tests that depend on dates", "evidence": "T-002 evidence: 2 failed test runs, fixed by fake timers" }
+  ],
+  "proposed_changes": ["Add 'freeze time in tests' to the qa-engineer instructions (needs founder review)"]
+}

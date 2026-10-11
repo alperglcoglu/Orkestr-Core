@@ -1,0 +1,32 @@
+{
+  "summary": "Minimal todo API with a list UI",
+  "tasks": [
+    {
+      "title": "Define the data model and REST endpoints",
+      "owner": "tech-lead",
+      "description": "Document endpoints and payloads in architecture.md.",
+      "acceptance_criteria": ["Endpoints and payloads are documented", "Founder-visible decision recorded if alternatives exist"],
+      "depends_on": [],
+      "scope": ["docs/**", "package.json"],
+      "requires_approval": false
+    },
+    {
+      "title": "Implement the todo API",
+      "owner": "backend-engineer",
+      "description": "CRUD endpoints with input validation and tests.",
+      "acceptance_criteria": ["All endpoints covered by passing automated tests", "Invalid input returns 400"],
+      "depends_on": ["#1"],
+      "scope": ["src/api/**", "tests/api/**"],
+      "requires_approval": false
+    },
+    {
+      "title": "Implement the list UI",
+      "owner": "frontend-engineer",
+      "description": "List, add, and complete todos; loading, error, and empty states.",
+      "acceptance_criteria": ["UI tests pass", "Empty and error states render"],
+      "depends_on": ["#1"],
+      "scope": ["src/ui/**", "tests/ui/**"],
+      "requires_approval": false
+    }
+  ]
+}

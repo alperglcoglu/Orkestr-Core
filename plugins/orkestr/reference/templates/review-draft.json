@@ -1,0 +1,28 @@
+{
+  "task_id": "T-002",
+  "reviewers": ["qa-engineer", "security-reviewer"],
+  "scope": "Todo API endpoints (src/api/*)",
+  "verdict": "CHANGES_REQUESTED",
+  "checks_run": [
+    { "command": "npm test", "result": "passed", "summary": "24 tests passed" }
+  ],
+  "findings": [
+    {
+      "title": "Missing length limit on todo title",
+      "severity": "medium",
+      "status": "confirmed",
+      "component": "src/api/todos.js",
+      "evidence": "POST with a 1 MB title returned 201 (reproduced locally)",
+      "recommendation": "Reject titles over 200 characters with 400"
+    },
+    {
+      "title": "Possible path traversal in export endpoint",
+      "severity": "high",
+      "status": "suspected",
+      "component": "src/api/export.js",
+      "evidence": "File name is joined from user input; not reproduced",
+      "recommendation": "Use a fixed export directory and validate names"
+    }
+  ],
+  "assumptions": ["Single-user local deployment; no authentication in the MVP"]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "orkestr",
+  "description": "Local marketplace for the Orkestr Phase 1 plugin (working name).",
+  "owner": {
+    "name": "Orkestr founder"
+  },
+  "plugins": [
+    {
+      "name": "orkestr",
+      "source": "./plugins/orkestr",
+      "description": "AI company workflows for a software project (Phase 1 MVP, local-first)."
+    }
+  ]
+}

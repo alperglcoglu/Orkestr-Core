@@ -1,0 +1,54 @@
+{
+  "objective": "Choose the persistence layer for the MVP",
+  "context": "PRD requires saving todos locally; zero additional cost; single user.",
+  "trigger": "Affects backend design, testing, and future migration (cross-functional, long-lived).",
+  "participants": [
+    { "role": "tech-lead", "responsibility": "Architecture and long-term maintainability" },
+    { "role": "backend-engineer", "responsibility": "Implementation effort and data access" },
+    { "role": "qa-engineer", "responsibility": "Testability" }
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "contributions": [
+        { "role": "tech-lead", "position": "SQLite via the standard driver", "key_points": ["No server", "Free"], "concerns": [] },
+        { "role": "backend-engineer", "position": "JSON file for the MVP", "key_points": ["Zero dependencies"], "concerns": ["Concurrent writes"] },
+        { "role": "qa-engineer", "position": "Either, if tests can use a temp location", "key_points": [], "concerns": ["Test isolation"] }
+      ]
+    }
+  ],
+  "options": [
+    { "id": "O1", "name": "SQLite", "summary": "Embedded database file" },
+    { "id": "O2", "name": "JSON file", "summary": "Single JSON document" }
+  ],
+  "criteria": ["Zero cost", "Simplicity", "Testability", "Migration path"],
+  "evaluation": "Both are free. SQLite handles concurrent writes and migrations better at a small extra setup cost.",
+  "outcome": "DECIDED",
+  "decision": {
+    "question": "Which persistence layer should the MVP use?",
+    "selected_option": "O1",
+    "rationale": "Meets all criteria; avoids rewriting storage later.",
+    "tradeoffs": ["Adds a driver dependency (free)"],
+    "risks": ["Driver install may need build tools on Windows"]
+  },
+  "dissent": [{ "role": "backend-engineer", "objection": "JSON would be faster to ship for a single user." }],
+  "open_questions": [],
+  "action_items": [
+    {
+      "title": "Add SQLite storage module",
+      "owner": "backend-engineer",
+      "description": "Repository layer with migrations.",
+      "acceptance_criteria": ["CRUD tests pass against a temp database file"],
+      "depends_on": [],
+      "requires_approval": false
+    },
+    {
+      "title": "Test isolation for storage",
+      "owner": "qa-engineer",
+      "description": "Each test uses its own temp database.",
+      "acceptance_criteria": ["Tests pass when run in parallel"],
+      "depends_on": ["#1"],
+      "requires_approval": false
+    }
+  ]
+}
