@@ -2,7 +2,8 @@
 
 You are the implementation engineer for the standalone orchestration core. Read `MASTER_SPEC.md`, `PHASE1_IMPLEMENTATION.md`, and `phase2/FINDINGS.md` first. This document is the binding Phase 3 scope. If the documents disagree, report the conflict instead of choosing silently.
 
-Status: **draft for founder approval.** No core code is written until the founder approves this document.
+Status: **approved by the founder on 2026-10-11.** Implemented in `core/`. Where the
+implementation refined a detail, this document was updated to match; §16 lists those changes.
 
 ## 1. Objective
 
@@ -62,22 +63,23 @@ core/
 ├── orkestr_core/
 │   ├── __init__.py
 │   ├── constants.py            # data directory name, ID prefixes, defaults (single source)
-│   ├── domain/                 # pure rules, no I/O
-│   │   ├── models.py           # pydantic models for every entity and draft
-│   │   ├── states.py           # task/decision/approval state machines
-│   │   ├── rules.py            # guards: authorization, dependencies, evidence, limits
-│   │   ├── scope.py            # scope pattern matching and overlap (port of scope.mjs)
-│   │   └── redact.py           # secret redaction (port of the Phase 1 redactor)
+│   ├── service.py              # project operations shared by CLI, API, and engine
+│   ├── domain/                 # pure rules, no I/O (Phase 1 shapes, ported one-to-one)
+│   │   ├── state.py            # task/approval state machine, guards, evidence, limits (state.mjs)
+│   │   ├── records.py          # meetings, decisions, reviews, retrospectives (records.mjs)
+│   │   ├── validate.py         # content validation (validate.mjs)
+│   │   ├── render.py           # Markdown views, status, report (render.mjs)
+│   │   ├── scope.py            # scope pattern matching and overlap (scope.mjs)
+│   │   └── redact.py           # secret redaction (core.mjs)
 │   ├── store/                  # SQLite persistence
 │   │   ├── db.py               # connection, transactions, locking
 │   │   ├── migrations/         # 0001_initial.sql, ...
 │   │   └── repo.py             # repositories; the only module that writes SQL
-│   ├── interop/                # Phase 1 format
-│   │   ├── importer.py         # .orkestr/*.json → SQLite
-│   │   └── exporter.py         # SQLite → .orkestr/*.json + generated .md views
+│   ├── interop/
+│   │   └── files.py            # Phase 1 file layout (import and export live in service.py)
 │   ├── agents/
 │   │   ├── definitions.py      # loads plugins/orkestr/agents/*.md (single source of role prompts)
-│   │   ├── schemas/            # JSON Schemas for each structured agent output
+│   │   ├── schemas.py          # pydantic models → JSON Schemas for each structured agent output
 │   │   └── prompts.py          # step prompts (plan, implement, review, meeting, synthesis)
 │   ├── executor/
 │   │   ├── base.py             # AgentExecutor protocol, AgentRequest, AgentResult
@@ -86,7 +88,8 @@ core/
 │   ├── workflow/
 │   │   ├── engine.py           # resumable run loop, checkpoints, pause/resume/cancel
 │   │   ├── steps.py            # plan, wave, implement, verify, review, fix, recovery, report
-│   │   └── verify.py           # runs test commands itself; git-based changed-file detection
+│   │   ├── verify.py           # runs test commands itself; git-based changed-file detection
+│   │   └── lock.py             # .orkestr/core.lock
 │   ├── api/
 │   │   └── app.py              # FastAPI app (127.0.0.1 only)
 │   └── cli.py                  # `orkestr-core` command
@@ -186,18 +189,19 @@ AgentResult = {
 - **Invocation** (one subprocess per agent call, list arguments, no shell):
 
   ```
-  claude -p <prompt>
+  claude -p                                # the step prompt goes in on stdin
     --output-format json
-    --json-schema <schema>                 # when output_schema is set
-    --agents <tmp file> --agent <role>     # role definition built from plugins/orkestr/agents/<role>.md
-    --allowedTools <role tool list>
+    --append-system-prompt-file <tmp file> # the role prompt from plugins/orkestr/agents/<role>.md
+    --tools <profile tools>                # only these built-in tools exist in the session
+    --allowedTools <profile allowlist>     # Bash only as Bash(<test command form>)
     --permission-mode dontAsk              # anything not allowed is denied; nobody is prompted
+    --restricted                           # ignore user/project/local settings files
     --settings <tmp settings file>         # PreToolUse hook → plugins/orkestr/scripts/guard.mjs
-    --no-session-persistence
-    [--model <model>]
+    --strict-mcp-config --disable-slash-commands --no-session-persistence
+    [--max-turns <agent maxTurns>] [--json-schema <schema>] [--model <model>]
   ```
 
-  The exact flag behavior (in particular `--json-schema` output placement, `--agent` with `--agents`, how `maxTurns` is applied, and how usage limits show up in the result) is verified against v2.1.295 in work-order step 4. The findings are recorded in `core/README.md`, and this section is corrected if needed.
+  The exact flag behavior (in particular `--json-schema` output placement, whether `--max-turns` is honored, whether `--restricted` keeps the subscription sign-in, and how usage limits show up in the result) is verified against v2.1.295 in work-order step 4. The findings are recorded in `core/README.md`, and this section is corrected if needed.
 - **Permissions:** headless runs have no human to answer a prompt. `dontAsk` makes every "ask" from the guard hook a denial. Restricted actions (MASTER_SPEC §10.2) are therefore never possible inside an agent call; they go through approval records (§8). Tool profiles:
   - `read_only`: Read, Grep, Glob;
   - `review`: `read_only` plus Bash limited to the project's test commands;
@@ -229,13 +233,14 @@ Phase 1 workflow rules move from skill text into code. The engine decides what h
 
 1. **Init or load.** Create the project from the goal, or load it. Refuse when the core does not own the project (§5.1).
 2. **Plan** (if there are no open tasks). One `product-manager` call (plus an optional `system-architect` call) produces the PRD text and a plan draft. The core writes the PRD only if it is absent, imports the tasks, and auto-authorizes them under bounded autonomy. The Phase 2 "done when" checklist is checked in code: a PRD exists, at least one scoped task exists, and validation passes.
-3. **Wave.** Select up to `max_parallel_tasks` READY tasks with disjoint scopes. This is the Phase 1 `next --parallel` rule, ported.
+3. **Wave.** Select up to `max_parallel_tasks` READY tasks with disjoint scopes. This is the Phase 1 `next --parallel` rule, ported. Tasks owned by `founder` are never given to an agent; tasks owned by `orchestrator` go to the `tech-lead` role.
 4. **Implement.** Move each task to IN_PROGRESS and make one owner-role call with the `implement` profile. In a wave, the calls run concurrently in the same working tree; their scopes are disjoint.
 5. **Verify** (sequential, by the core).
    - Changed files come from `git status --porcelain` and `git diff --name-only` against the snapshot taken before the wave. A file outside the task's scope is a failed check.
    - The test commands come from the task's `verify` list (new optional task field) and the implementer's summary. The core runs them itself, as list arguments with a timeout, from the project root, and records `test_result` and `evidence`.
    - Agent-reported results are recorded as notes only and never count as evidence. This turns Phase 2 findings 1 and 3 into code.
-   - A command must match the project's allowed test-command patterns (default: `node --test …`, `npm test`, `python -m pytest …`, `pytest …`). Other commands become a founder question and are not run.
+   - A command must match the allowed test-command forms (`node --test …`, `npm test`, `python -m pytest …`, `pytest …`) and contain no shell operators. Other commands are not run; they become a task note. A task with no runnable command gets a failed check, which consumes a fix attempt.
+   - A file that was dirty before the call and is back at its committed state afterwards is a revert. It is noted on the task but not counted against the scope.
 6. **Review.** One independent `qa-engineer` call with the `review` profile produces a review draft. It is recorded with the Phase 1 rules: PASS is rejected with a confirmed critical or high finding. `security-reviewer` is added when the task touches auth, secrets, input parsing, or dependencies (keyword and path rules in code).
 7. **Complete or fix.** With passed evidence and a PASS review, the task goes REVIEW → COMPLETED. Otherwise the findings become a task note and the owner gets a fix call. Each failed verification consumes a fix attempt (limit 3), as in Phase 1.
 8. **Recovery.** When a task reaches FAILED, the core holds one recovery meeting (§7.4). A decision reopens the task. ESCALATED or NO_DECISION, or a second failure, sets the run to `WAITING_FOUNDER`.
@@ -434,6 +439,17 @@ Each step is a separate commit on a branch (not `main`). The whole phase goes to
 
 - **Assumption:** one project per core database and one local founder, matching the current single-user usage.
 - **Assumption:** the managed project is a Git repository. Scope verification needs Git. Without Git, the core refuses to run implementation steps and explains why. It does not fall back to an unverified mode.
-- **Open (resolved in step 4):** whether `maxTurns` from `--agents` is honored in print mode. If it is not, the core relies on `timeout_s` and reports the gap.
+- **Open (resolved in step 4):** whether `--max-turns` is honored in print mode. If it is not, the core relies on `timeout_s` and reports the gap.
+- **Open (resolved in step 4):** whether `--restricted` keeps the founder's subscription sign-in. If it does not, the core uses `--setting-sources` without the project source instead, and documents the difference.
 - **Open (resolved in step 4):** the exact JSON shape of usage-limit failures. Until it is known, any `is_error` result whose text mentions a limit is treated as `usage_limit` (the safe side: stop, do not retry).
 - **Open (founder):** whether the plugin should eventually call the core's API instead of its own state tool. This is not part of Phase 3. It is evaluated after the live smoke test.
+
+## 16. Changes made during implementation
+
+| Section | Change | Reason |
+| :- | :- | :- |
+| §4 | Domain modules mirror the Phase 1 files (`state.py`, `records.py`, `validate.py`, `render.py`) instead of `models.py`, `states.py`, and `rules.py`. pydantic is used for agent outputs and API responses | A one-to-one port keeps the rules easy to compare with the Node tool, and the ported tests keep their meaning |
+| §6.2 | Role prompts go in with `--append-system-prompt-file` and turn limits with `--max-turns`, instead of `--agents`/`--agent`. `--tools`, `--restricted`, `--strict-mcp-config`, and `--disable-slash-commands` were added | Fewer moving parts, and the repository's own settings cannot widen agent permissions |
+| §7.2 step 5 | Disallowed test commands become task notes instead of founder questions. Reverts are not scope violations | A founder question for every bad command would stop runs over routine agent mistakes; the fix-attempt limit still bounds them |
+| §7.2 step 3 | Founder-owned tasks are not given to agents | They are the founder's work by definition |
+| §3 | `max_reported_cost_usd_per_run` is implemented as an optional limit, off by default | As specified |
