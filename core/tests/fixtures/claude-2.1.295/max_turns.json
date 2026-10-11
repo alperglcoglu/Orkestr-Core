@@ -1,0 +1,96 @@
+{
+  "duration_api_ms": 1585,
+  "stop_reason": "tool_use",
+  "session_id": "b8a91bdd-fdd4-4466-b454-ded77989170c",
+  "total_cost_usd": 0.0033164,
+  "usage": {
+    "input_tokens": 2,
+    "cache_creation_input_tokens": 388,
+    "cache_read_input_tokens": 4452,
+    "output_tokens": 87,
+    "output_tokens_details": {
+      "thinking_tokens": 0
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 388,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 87,
+        "cache_read_input_tokens": 4452,
+        "cache_creation_input_tokens": 388,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 388
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "modelUsage": {
+    "claude-sonnet-5-5": {
+      "inputTokens": 2,
+      "outputTokens": 87,
+      "cacheReadInputTokens": 4452,
+      "cacheCreationInputTokens": 388,
+      "webSearchRequests": 0,
+      "costUSD": 0.0033164,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "permission_denials": [],
+  "terminal_reason": "max_turns",
+  "fast_mode_state": "off",
+  "fast_mode_disabled_reason": "sdk_opt_in_required",
+  "subagent_stats": {
+    "spawned": 0,
+    "requested": {
+      "background": 0,
+      "foreground": 0,
+      "unset": 0
+    },
+    "started_in_background": 0,
+    "max_depth": 0,
+    "spawned_by_subagents": 0,
+    "completed": 0,
+    "failed": 0,
+    "killed": {
+      "parent": 0,
+      "user": 0,
+      "system": 0
+    },
+    "refused": {
+      "depth_limit": 0,
+      "concurrency_limit": 0,
+      "budget": 0
+    },
+    "by_type": {}
+  },
+  "safety_stops": 0,
+  "is_error": true,
+  "num_turns": 2,
+  "subtype": "error_max_turns",
+  "errors": [
+    "Reached maximum number of turns (1)"
+  ],
+  "type": "result",
+  "duration_ms": 1683,
+  "uuid": "56918ae7-29cb-4577-a6e4-778fbdb37139",
+  "queued_turn_count": 0,
+  "result_index": 0
+}

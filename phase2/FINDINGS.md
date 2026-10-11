@@ -46,3 +46,28 @@ Scorecard: no ❌. PRD written, all 4 tasks scoped and COMPLETED, every changed 
 | 11 | Scorecard warns that both participants took the same position | Info | Expected here: the meeting was forced by the test protocol. Kept as a warning because in real runs it signals an unnecessary meeting |
 
 Fixes 3–8 from run 1 are confirmed by this run.
+
+## Run 3 — same project, standalone core (2026-10-12)
+
+Setup: `orkestr-core run --model sonnet --max-agent-calls 20` on a fresh sandbox (`orkestr-core init`, local Git, no remote), Claude Code 2.1.295 headless, bounded autonomy. No interactive session and no slash commands.
+
+Before the run, three minimal calls verified the executor (fixtures in `core/tests/fixtures/claude-2.1.295/`): the subscription sign-in works with `--restricted`, structured output arrives in `structured_output`, `--max-turns` is honored (`error_max_turns`), and a disallowed `echo pwned > pwned.txt` was denied with no file written.
+
+Scorecard (`--rerun`): no ❌. One ⚠️, "no meetings held", which is expected: the core holds meetings only on real triggers, and none occurred.
+
+| Criterion | Result |
+| :- | :- |
+| Completes the intended workflow | Yes. PRD written, 3 scoped tasks planned and COMPLETED, completion report produced, no founder question |
+| Artifacts consistent | Yes. `ork validate` passes on the core's mirror files; references resolve |
+| Meetings useful | Not exercised (no trigger) |
+| Tasks and dependencies | Dependencies respected; every changed file inside a task scope; the tasks formed a chain, so no parallel wave ran |
+| Generated code verifiable | Every test command was run by the core itself and re-ran green |
+| Access and budget | No remote, no npm dependencies, no approvals needed. 11 agent calls, 62 turns, about 363k input and 21k output tokens; Claude Code's own estimate is $0.57 (plan usage under a subscription) |
+
+Observations:
+
+| # | Observation | Severity | Action |
+| :- | :- | :- | :- |
+| 12 | The security review (triggered by `package.json` in the task scope) found a confirmed bug: names such as `__proto__` corrupted results. The fix call resolved it and both reviews passed | Positive | None; the independent second review paid for itself |
+| 13 | "Checks that actually ran" in the report also lists `orkestr scope check` lines, which are bookkeeping, not tests | Low | Open; the same in the plugin's report. Separate them in both renderers |
+| 14 | The run used 11 calls against an estimate of 10–15 for the plugin protocol; the planned 3-task cap was respected | Info | — |

@@ -1,0 +1,1 @@
+"""Local HTTP API (PHASE3_IMPLEMENTATION.md §9.2)."""

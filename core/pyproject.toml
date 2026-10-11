@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orkestr-core"
+version = "0.1.0"
+description = "Standalone orchestration core for Orkestr (Phase 3)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+# Pinned on purpose (PHASE3_IMPLEMENTATION.md §3). Adding a package needs founder approval.
+dependencies = [
+  "fastapi==0.143.0",
+  "uvicorn==0.54.0",
+  "pydantic==2.14.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "httpx==0.28.1",
+]
+
+[project.scripts]
+orkestr-core = "orkestr_core.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["orkestr_core*"]
+
+[tool.setuptools.package-data]
+orkestr_core = ["store/migrations/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

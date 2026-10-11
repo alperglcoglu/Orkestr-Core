@@ -220,6 +220,9 @@ export function createTasks(state, items, source, { actor = 'orchestrator', deci
       errors.push(`${where}: "description" must be a string`);
     }
     for (const p of scopeProblems(item.scope)) errors.push(`${where}: ${p}`);
+    if (item.verify !== undefined && (!stringList(item.verify) || !item.verify.every(nonEmptyString))) {
+      errors.push(`${where}: "verify" must be a list of exact test commands`);
+    }
     return {
       title: item.title?.trim?.() ?? item.title,
       description: item.description ?? '',
@@ -228,6 +231,7 @@ export function createTasks(state, items, source, { actor = 'orchestrator', deci
       acceptance_criteria: stringList(criteria) ? criteria.filter(nonEmptyString) : [],
       requires_approval: item.requires_approval === true,
       scope: stringList(item.scope) ? item.scope.map((s) => s.trim().replace(/\\/g, '/')) : [],
+      verify: stringList(item.verify) && item.verify.length ? item.verify.map((v) => v.trim()) : null,
     };
   });
 
@@ -257,6 +261,7 @@ export function createTasks(state, items, source, { actor = 'orchestrator', deci
     notes: [],
     created_at: ts,
     updated_at: ts,
+    ...(n.verify ? { verify: n.verify } : {}),
   }));
 
   const cycle = findCycle([...state.tasks, ...created]);

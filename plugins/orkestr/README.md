@@ -259,6 +259,8 @@ Credentials, tokens, and passwords are not written to logs or records. The state
   ```
 
 - If you use Git, you may want to add `.orkestr/drafts/` to your `.gitignore`.
+- If the project was handed to the standalone core ([`core/`](../../core/README.md)), `project.json` says `"managed_by": "core"`. The files are then read-only mirrors: `/orkestr:status` still works, but the state tool refuses changes until you run `orkestr-core export --release`.
+- Tasks may list exact verification commands in `verify` (for example `["node --test tests/"]`).
 
 ### Task states
 
