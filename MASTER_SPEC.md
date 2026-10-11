@@ -1335,6 +1335,8 @@ Fix the most important problems before expanding the system.
 
 ## Phase 3 — Standalone core
 
+The binding Phase 3 scope is in `PHASE3_IMPLEMENTATION.md`.
+
 Design and implement a separate orchestration core.
 
 Potential initial components:
