@@ -1,4 +1,4 @@
-# ORKESTR / ORKESTRA — MASTER SPECIFICATION
+# ORKESTR — MASTER SPECIFICATION
 
 ## Autonomous AI Company Platform
 
@@ -10,9 +10,9 @@
 
 **Budget constraint:** No additional paid APIs, subscriptions, cloud services, or infrastructure
 
-**Working product name:** Orkestr / Orkestra — final branding undecided
+**Product name:** Orkestr
 
-**Technical plugin identifier (Phase 1):** `orkestr` — a technical identifier only, not a branding decision. It is chosen so that it can be renamed later (see §2.4).
+**Technical plugin identifier (Phase 1):** `orkestr`. It is defined so that it can be renamed later if ever needed (see §2.4).
 
 ---
 
@@ -107,7 +107,7 @@ In Phase 1 this separation is concrete: state rules (task states, transitions, d
 
 ## 2.4 Naming and renaming
 
-The final brand (Orkestr or Orkestra) is undecided. The technical identifier `orkestr` appears in:
+The product name is Orkestr. The technical identifier `orkestr` appears in:
 
 - the plugin `name` in `plugin.json` (which namespaces every skill and agent, e.g. `/orkestr:plan`, `orkestr:tech-lead`);
 - the project data directory name `.orkestr/`;

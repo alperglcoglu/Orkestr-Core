@@ -1,8 +1,8 @@
 {
   "name": "orkestr",
-  "description": "Local marketplace for the Orkestr Phase 1 plugin (working name).",
+  "description": "Marketplace for the Orkestr Claude Code plugin.",
   "owner": {
-    "name": "Orkestr founder"
+    "name": "Alper Gulcuoglu"
   },
   "plugins": [
     {

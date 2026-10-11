@@ -12,7 +12,7 @@ This is Phase 1 of a larger product. Later phases (standalone backend, dashboard
 
 | Item | Value |
 | :- | :- |
-| Technical plugin identifier | `orkestr` (not a branding decision; Orkestr vs. Orkestra is still open) |
+| Technical plugin identifier | `orkestr` |
 | Plugin directory | `plugins/orkestr/` |
 | Manifest | `plugins/orkestr/.claude-plugin/plugin.json` |
 | Local marketplace | `.claude-plugin/marketplace.json` at the repository root (lists `./plugins/orkestr`) |

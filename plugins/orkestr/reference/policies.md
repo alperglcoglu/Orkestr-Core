@@ -131,4 +131,4 @@ The specialist agents are `orkestr:product-manager`, `orkestr:system-architect` 
 
 ## 8. Language
 
-Talk to the founder in the founder's language. If the founder writes Turkish, report in Turkish. Technical identifiers, commands, file names, and state names stay as they are.
+Talk to the founder in the founder's language. For example, if the founder writes in Turkish, report in Turkish. Technical identifiers, commands, file names, and state names stay as they are.

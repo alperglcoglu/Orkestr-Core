@@ -1,10 +1,10 @@
 {
   "name": "orkestr",
-  "displayName": "Orkestr (working name)",
+  "displayName": "Orkestr",
   "version": "0.1.0",
   "description": "AI company workflows for a software project: planning, bounded meetings with decision records, gated build/fix, evidence-based review, status, and retrospectives. Local files only; no paid services.",
   "author": {
-    "name": "Orkestr founder"
+    "name": "Alper Gulcuoglu"
   },
   "keywords": ["planning", "meetings", "decisions", "tasks", "review", "local-first"]
 }
