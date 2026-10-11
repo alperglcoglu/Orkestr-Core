@@ -94,6 +94,9 @@ export function validateStore(root) {
     if (project.autonomy !== undefined && !AUTONOMY_MODES.includes(project.autonomy)) {
       errors.push(`project.json: autonomy must be one of ${AUTONOMY_MODES.join(', ')}`);
     }
+    if (project.managed_by !== undefined && !['plugin', 'core'].includes(project.managed_by)) {
+      errors.push('project.json: managed_by must be plugin or core');
+    }
     if (l.max_parallel_tasks !== undefined && (!Number.isInteger(l.max_parallel_tasks) || l.max_parallel_tasks < 1)) {
       errors.push('project.json: limits.max_parallel_tasks must be a positive integer');
     }
@@ -185,6 +188,9 @@ export function validateStore(root) {
       errors.push(`${where}: notes must be a list of {author, text, at}`);
     }
     for (const p of scopeProblems(t?.scope)) errors.push(`${where}: ${p}`);
+    if (t?.verify !== undefined && (!Array.isArray(t.verify) || !t.verify.every(str))) {
+      errors.push(`${where}: verify must be a list of commands`);
+    }
   }
   // Parallel-work invariants (MASTER_SPEC §5.3)
   const running = tasks.filter((t) => t?.status === 'IN_PROGRESS');

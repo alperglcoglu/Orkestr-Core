@@ -139,6 +139,14 @@ function need(value, label) {
 function mutate(root, fn) {
   return withLock(root, () => {
     const state = loadState(root);
+    // A project handed to the standalone core is read-only here (PHASE3_IMPLEMENTATION.md §12).
+    if (state.project.managed_by === 'core') {
+      throw new OrkestrError(
+        'This project is managed by orkestr-core; these files are read-only mirrors. ' +
+          'Use orkestr-core, or run `orkestr-core export --release` to hand the project back to the plugin.',
+        'E_NOT_OWNER',
+      );
+    }
     const result = fn(state);
     saveState(state);
     return result;
