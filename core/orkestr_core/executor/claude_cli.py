@@ -125,6 +125,13 @@ def _extract_json(text: str) -> dict | None:
     return None
 
 
+def _denial(d: dict) -> str:
+    tool = d.get("tool_name") or "tool"
+    tool_input = d.get("tool_input") or {}
+    detail = tool_input.get("command") or tool_input.get("file_path") or ""
+    return redact_string(f"{tool}: {detail}" if detail else tool)[:300]
+
+
 def parse_result(stdout: str, returncode: int | None, stderr: str = "") -> AgentResult:
     data = None
     for candidate in [stdout, *reversed((stdout or "").splitlines())]:
@@ -151,17 +158,18 @@ def parse_result(stdout: str, returncode: int | None, stderr: str = "") -> Agent
         reported_cost_usd=data.get("total_cost_usd"),
     )
     model = next(iter(data.get("modelUsage") or {}), None)
+    denials = [_denial(d) for d in data.get("permission_denials") or []]
     text = redact_string(str(data.get("result") or ""))
     if data.get("is_error") or data.get("subtype") != "success":
         detail = text or str(data.get("subtype") or "error")
         if data.get("subtype") == "error_max_turns":
             detail = f"maximum number of turns reached ({usage.num_turns})"
         status = "usage_limit" if USAGE_LIMIT.search(text) else "error"
-        return AgentResult(status=status, text=text, usage=usage, session_id=data.get("session_id"), error=detail, model=model)
+        return AgentResult(status=status, text=text, usage=usage, session_id=data.get("session_id"), error=detail, model=model, denials=denials)
     output = data.get("structured_output")
     if not isinstance(output, dict):
         output = _extract_json(text)
-    return AgentResult(status="ok", output=output, text=text, usage=usage, session_id=data.get("session_id"), model=model)
+    return AgentResult(status="ok", output=output, text=text, usage=usage, session_id=data.get("session_id"), model=model, denials=denials)
 
 
 def kill_tree(proc: subprocess.Popen):

@@ -54,6 +54,7 @@ class AgentResult:
     session_id: str | None = None
     error: str | None = None
     model: str | None = None
+    denials: list[str] = field(default_factory=list)  # tool calls the permission rules refused
 
 
 class CancelToken:

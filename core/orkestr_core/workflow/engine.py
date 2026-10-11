@@ -482,7 +482,7 @@ class Engine:
                 self._end_step(steps[tid], "FAILED", error=self._error_text(errors[tid]))
             else:
                 o = outcomes[tid]
-                self._end_step(steps[tid], "DONE", result={"status": o.result.status, "output": o.output, "error": o.error})
+                self._end_step(steps[tid], "DONE", result={"status": o.result.status, "output": o.output, "error": o.error, "denials": o.result.denials})
         stops = [e for e in errors.values() if isinstance(e, StopRun)]
         if stops:
             raise stops[0]
@@ -500,7 +500,8 @@ class Engine:
                 continue
             verify_tasks.append(tid)
         if verify_tasks:
-            self._verify_wave(verify_tasks, before, {tid: outcomes[tid].output or {"_error": outcomes[tid].error} for tid in verify_tasks}, wave_ids=ids)
+            outputs = {tid: {**(outcomes[tid].output or {"_error": outcomes[tid].error}), "_denied": outcomes[tid].result.denials} for tid in verify_tasks}
+            self._verify_wave(verify_tasks, before, outputs, wave_ids=ids)
 
     def _interrupted_snapshot(self, task_id: str) -> dict | None:
         rows = self.store.query(
@@ -563,6 +564,8 @@ class Engine:
                     continue
                 for n in output.get("notes") or []:
                     notes.append(n)
+                if output.get("_denied"):
+                    notes.append("Denied tool calls (not allowed for agents): " + "; ".join(output["_denied"][:10]))
                 claimed = set(output.get("changed_files") or [])
                 missing = sorted(f for f in claimed if f.replace("\\", "/") not in changed)
                 if missing:
