@@ -181,3 +181,14 @@ test('system-architect, ml-engineer, and data-engineer are valid owners; devops 
   assert.deepEqual(['T-001', 'T-002', 'T-003'].map((id) => p.task(id).owner), ['system-architect', 'ml-engineer', 'data-engineer']);
   assert.match(p.run('task', 'add', '--title', 'Deploy', '--owner', 'devops-engineer', '--criterion', 'x').err, /owner/);
 });
+
+test('a passed scope check alone is not verification for completion (Phase 2 finding)', (t) => {
+  const p = threeIndependent(t);
+  p.ok('task', 'move', 'T-001', 'IN_PROGRESS');
+  p.ok('scope', 'check', 'T-001', '--file', 'src/api/users.js');
+  p.ok('task', 'move', 'T-001', 'REVIEW');
+  p.ok('review', 'record', p.draft('review.json', { task_id: 'T-001', reviewers: ['qa-engineer'], scope: 'API', verdict: 'PASS', checks_run: [], findings: [], assumptions: [] }));
+  const r = p.run('task', 'move', 'T-001', 'COMPLETED');
+  assert.equal(r.code, 1);
+  assert.match(r.err, /scope check does not count/);
+});

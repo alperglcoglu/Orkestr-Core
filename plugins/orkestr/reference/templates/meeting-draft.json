@@ -40,6 +40,7 @@
       "description": "Repository layer with migrations.",
       "acceptance_criteria": ["CRUD tests pass against a temp database file"],
       "depends_on": [],
+      "scope": ["src/storage/**", "tests/storage/**"],
       "requires_approval": false
     },
     {
@@ -48,6 +49,7 @@
       "description": "Each test uses its own temp database.",
       "acceptance_criteria": ["Tests pass when run in parallel"],
       "depends_on": ["#1"],
+      "scope": ["tests/helpers/**"],
       "requires_approval": false
     }
   ]

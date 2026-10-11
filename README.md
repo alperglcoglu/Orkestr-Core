@@ -5,6 +5,7 @@ Orkestr is an open-source Claude Code plugin that runs your software project lik
 - Plugin docs and installation: [plugins/orkestr/README.md](plugins/orkestr/README.md)
 - Vision and full specification: [MASTER_SPEC.md](MASTER_SPEC.md)
 - Phase 1 implementation plan: [PHASE1_IMPLEMENTATION.md](PHASE1_IMPLEMENTATION.md)
+- Phase 2 real-project validation kit: [phase2/README.md](phase2/README.md)
 
 ## Quick install
 

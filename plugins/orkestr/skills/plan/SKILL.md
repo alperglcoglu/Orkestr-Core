@@ -38,6 +38,15 @@ Read `${CLAUDE_PLUGIN_ROOT}/reference/policies.md` first and follow it. `ork <ar
      - **Changes requested:** adjust. Tasks already imported can be cancelled with `ork task move <id> CANCELLED --reason "..."`, and new ones imported.
      - **No answer:** leave the tasks in BACKLOG.
 
+## Done when
+
+Do not end the plan step until all of these hold, even for a small goal:
+- `.orkestr/requirements/prd.md` exists (write a short one yourself when you skip the product-manager);
+- at least one task is imported, each implementation task with a `scope`;
+- `ork validate` passes.
+
+A meeting is not a substitute for the plan: its action items add to the plan, they do not replace it.
+
 ## Report
 
 End with:

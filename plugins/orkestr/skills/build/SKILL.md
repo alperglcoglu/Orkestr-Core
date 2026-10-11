@@ -36,6 +36,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/reference/policies.md` first and follow it. `ork <ar
 ## 3. Implement (smallest correct change)
 
 - Respect repository discipline: inspect first, follow existing conventions, preserve the founder's changes, and touch only what the task needs.
+- Edit existing files (for example a README the founder wrote) by adding or changing the relevant part; never replace their whole content. Tell the implementer the same.
 - If the owner is `backend-engineer`, `frontend-engineer`, `ml-engineer`, `data-engineer`, or `qa-engineer`, delegate **once** to `orkestr:<owner>`. Give it:
   - the task JSON (title, description, acceptance criteria);
   - the task's **notes** (QA or security findings, recovery decisions, hand-offs from earlier tasks);
@@ -52,6 +53,9 @@ Read `${CLAUDE_PLUGIN_ROOT}/reference/policies.md` first and follow it. `ork <ar
 - Run the relevant tests and checks **yourself**, even if an agent says it ran them. Record each one with its real result:
 
   `ork evidence add <id> --type test|check --result passed|failed --command "<exact command>" --summary "<key output>"`
+
+- `--command` must be **one exact command that can be re-run as is** from the project root and exits non-zero on failure (for example `node --test` or `node bin/split.js 100 a b c`). Record separate commands as separate evidence. Never chain unrelated commands with `;`, and never write a description in place of a command; put an ad-hoc check (such as a loop) into a test file or script and record the command that runs it. The Phase 2 scorecard re-runs these commands.
+- `ork scope check` is recorded automatically and does not count as verification.
 
 - If the project has no automated tests, say so:
   - Record `--type test --result not_run --summary "<why>"`.
