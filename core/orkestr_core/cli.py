@@ -119,6 +119,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("serve", help="start the local HTTP API on 127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
+    s = sub.add_parser("dashboard", help="start the local API and open the founder dashboard in the browser")
+    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--no-open", action="store_true", help="print the dashboard address instead of opening a browser")
     return p
 
 
@@ -259,6 +262,13 @@ def _dispatch(project: Project, args) -> int:
         from .api.app import serve
 
         serve(project, port=args.port)
+        return 0
+    if cmd == "dashboard":
+        from .api.app import dashboard_url, serve
+
+        if args.no_open:
+            print(f"Open {dashboard_url(project, args.port)} (the address contains your API token; do not share it).")
+        serve(project, port=args.port, open_dashboard=not args.no_open)
         return 0
     raise OrkestrError(f"Unknown command: {cmd}", "E_USAGE")
 

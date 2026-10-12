@@ -17,7 +17,7 @@ from phase1_helpers import P
 @pytest.fixture
 def client(tmp_path):
     p = P(tmp_path, autonomy="bounded")
-    return p, TestClient(api.create_app(p.project)), {"X-Orkestr-Token": p.project.token()}
+    return p, TestClient(api.create_app(p.project), base_url="http://127.0.0.1:8765"), {"X-Orkestr-Token": p.project.token()}
 
 
 def test_every_endpoint_requires_the_token(client):
@@ -96,7 +96,7 @@ def test_runs_start_in_the_background_and_only_one_at_a_time(tmp_path):
     fake.add("plan", plan_output(plan_task(scope=("src/**", "tests/**"))))
     fake.add("implement", implement({"src/a.js": "1\n", "tests/a.test.mjs": PASSING_TEST}))
     fake.add("review", review("PASS"))
-    c = TestClient(api.create_app(project, lambda body: engine(project, fake)))
+    c = TestClient(api.create_app(project, lambda body: engine(project, fake)), base_url="http://127.0.0.1:8765")
     auth = {"X-Orkestr-Token": project.token()}
     assert c.post("/runs", json={}, headers=auth).status_code == 202
     second = c.post("/runs", json={}, headers=auth)

@@ -180,6 +180,25 @@ class Project:
 
         return self.mutate(apply)
 
+    def needs_founder(self) -> list[dict]:
+        """What waits for the founder, with the action that answers it (the dashboard's "Needs you")."""
+        state = self.store.load()
+        out = [{"kind": "approval", "id": a["id"], "text": f"[{a['category']}] {a['action']}"} for a in state.approvals if a["status"] == "PENDING"]
+        out += [{"kind": "decision", "id": d["id"], "text": d["question"]} for d in state.decisions.values() if d["approval_status"] in ("PROPOSED", "NEEDS_FOUNDER")]
+        for t in state.tasks:
+            if t["status"] in st.TERMINAL:
+                continue
+            if t["owner"] == "founder" and t["status"] in ("READY", "IN_PROGRESS"):
+                out.append({"kind": "founder_task", "id": t["id"], "text": t["title"]})
+            elif not t["authorized"]:
+                out.append({"kind": "authorize", "id": t["id"], "text": t["title"]})
+            elif t["status"] == "FAILED":
+                out.append({"kind": "retry", "id": t["id"], "text": (t.get("failure") or {}).get("next_action") or t["title"]})
+        run = self.latest_run()
+        if run and run["status"] == "WAITING_FOUNDER" and not out:
+            out.append({"kind": "run", "id": str(run["id"]), "text": run["status_reason"] or "the run waits for the founder"})
+        return out
+
     # -- teams and policies (PHASE4_IMPLEMENTATION.md §5, §6) ---------------------
 
     def team(self) -> dict[str, dict]:

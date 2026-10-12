@@ -115,7 +115,7 @@ def test_the_summary_is_bounded_and_lists_empty_sections(project):
 def test_the_api_starts_a_retro_in_the_background(project, fake):
     completed_run(project, fake)
     fake.add("retro", retro_output())
-    c = TestClient(api.create_app(project, lambda body: engine(project, fake)))
+    c = TestClient(api.create_app(project, lambda body: engine(project, fake)), base_url="http://127.0.0.1:8765")
     auth = {"X-Orkestr-Token": project.token()}
 
     assert c.post("/retros", json={}).status_code == 401

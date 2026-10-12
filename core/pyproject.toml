@@ -29,7 +29,7 @@ orkestr-core = "orkestr_core.cli:main"
 include = ["orkestr_core*"]
 
 [tool.setuptools.package-data]
-orkestr_core = ["store/migrations/*.sql"]
+orkestr_core = ["store/migrations/*.sql", "ui/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
