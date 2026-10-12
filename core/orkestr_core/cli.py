@@ -140,6 +140,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2 if err.code == "E_USAGE" else 1
 
 
+def _require_project(project: Project) -> None:
+    """Every command after init/import needs a core database. Checking here keeps commands that
+    write into .orkestr/ (the run lock, the API token) from failing with a raw traceback."""
+    if project.store.exists():
+        return
+    if (project.dir / "project.json").exists():
+        hint = "It holds a plugin project; run `orkestr-core import` to hand it to the core."
+    else:
+        hint = "Run the command from the project directory, pass --project <dir>, or create one with `orkestr-core init`."
+    raise OrkestrError(f"No orkestr-core project in {project.root}. {hint}", "E_NO_PROJECT")
+
+
 def _dispatch(project: Project, args) -> int:
     cmd = args.cmd
     if cmd == "init":
@@ -152,6 +164,7 @@ def _dispatch(project: Project, args) -> int:
         if r["backup"]:
             print(f"The previous core database was kept as .orkestr/{r['backup']}.")
         return 0
+    _require_project(project)
     if cmd == "export":
         files = project.export(release=args.release, force=args.force)
         print(f"Wrote {len(files)} file(s)." + (" The plugin manages this project again." if args.release else ""))
