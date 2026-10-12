@@ -98,6 +98,11 @@ class Option(Strict):
     summary: str = ""
 
 
+class ScopeChange(Strict):
+    task_id: str
+    add: list[str] = Field(min_length=1, description="Path patterns to add to the task's scope")
+
+
 class SynthesisDecision(Strict):
     question: str
     selected_option: str | None = None
@@ -105,6 +110,9 @@ class SynthesisDecision(Strict):
     tradeoffs: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     founder_required: bool = False
+    scope_changes: list[ScopeChange] = Field(
+        default_factory=list, description="Files a steered task must also change for this decision; applied when the decision is approved"
+    )
 
 
 class Dissent(Strict):

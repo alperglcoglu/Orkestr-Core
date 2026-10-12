@@ -954,7 +954,7 @@ class Engine:
                 elif task_ids:
                     draft["applies_to"] = task_ids
                 try:
-                    self._check_action_items(draft["action_items"])
+                    self._check_action_items(draft["action_items"], (draft.get("decision") or {}).get("scope_changes") or [])
                     result = self.project.mutate(lambda s_: rec.record_meeting(s_, draft), run_id=self.run_id)
                     break
                 except OrkestrError as err:
@@ -1039,9 +1039,13 @@ class Engine:
         a = self.project.mutate(apply, run_id=self.run_id)
         self.log(f"{tid}: needs founder approval {a['id']} ({a['action']})")
 
-    def _check_action_items(self, items: list[dict]):
-        """Meeting action items follow the same team and policy rules as plan tasks."""
-        problems = []
+    def _check_action_items(self, items: list[dict], scope_changes: list[dict] | None = None):
+        """Meeting action items and scope changes follow the same team and policy rules as plan tasks."""
+        problems = [
+            f"decision.scope_changes for {c.get('task_id')} may touch protected paths {', '.join(hit)}"
+            for c in scope_changes or []
+            if (hit := pol.protected_overlap(c.get("add") or [], self.policy))
+        ]
         for i, a in enumerate(items):
             if a.get("owner") in AGENT_ROLES and not self._enabled(a["owner"]):
                 problems.append(f"action item {i + 1} owner {a['owner']} is not in this project's team")

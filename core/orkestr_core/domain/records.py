@@ -23,6 +23,7 @@ from .state import (
     require_mutable,
     transition,
 )
+from .scope import scope_problems, scopes_overlap
 
 MEETING_OUTCOMES = ("DECIDED", "ESCALATED", "NO_DECISION")
 DECISION_STATES = ("PROPOSED", "NEEDS_FOUNDER", "APPROVED", "REJECTED", "SUPERSEDED")
@@ -72,6 +73,9 @@ def validate_meeting_draft(draft: dict, state: State) -> list[str]:
     decision = draft.get("decision") if isinstance(draft.get("decision"), dict) else None
     if decision and "founder_required" in decision and not isinstance(decision["founder_required"], bool):
         e.append("decision.founder_required must be true or false")
+    if decision and decision.get("scope_changes"):
+        steered = set(applies_to if applies_ok else []) | ({recovery_for} if recovery_for else set())
+        e += scope_change_problems(state, decision["scope_changes"], steered)
     if not non_empty(draft.get("objective")):
         e.append('"objective" is required')
     if not non_empty(draft.get("context")):
@@ -157,8 +161,52 @@ def _approach_of(d: dict) -> str:
     return f"{name}{(' — ' + d['rationale']) if d.get('rationale') else ''}"
 
 
+def scope_change_problems(state: State, changes, steered: set[str]) -> list[str]:
+    """Scope changes a decision may carry (PHASE4_IMPLEMENTATION.md §13, finding 21): only for
+    open tasks the decision steers, valid patterns, and no overlap with another active task."""
+    if not isinstance(changes, list):
+        return ['"decision.scope_changes" must be a list']
+    e: list[str] = []
+    for i, c in enumerate(changes):
+        c = c if isinstance(c, dict) else {}
+        tid, add = c.get("task_id"), c.get("add")
+        where = f"decision.scope_changes[{i}]"
+        task = find_task(state, tid) if isinstance(tid, str) else None
+        if not task or tid not in steered:
+            e.append(f"{where}: {tid} is not a task this decision steers ({', '.join(sorted(steered)) or 'none'})")
+            continue
+        if task["status"] in TERMINAL:
+            e.append(f"{where}: {tid} is {task['status']}")
+        if not str_list(add) or not add:
+            e.append(f"{where}.add must be a non-empty list of path patterns")
+            continue
+        e += [f"{where}: {p}" for p in scope_problems(add)]
+        if not task.get("scope"):
+            e.append(f"{where}: {tid} has no scope to widen (it may already change any file)")
+        others = [t for t in state.tasks if t["id"] != tid and t["status"] in ("IN_PROGRESS", "REVIEW")]
+        clash = [t["id"] for t in others if scopes_overlap(add, t.get("scope") or [])]
+        if clash:
+            e.append(f"{where}: the new patterns overlap the scope of active task(s) {', '.join(clash)}")
+    return e
+
+
+def _apply_scope_changes(state: State, d: dict, author: str):
+    for c in d.get("scope_changes") or []:
+        task = find_task(state, c["task_id"])
+        if not task or task["status"] in TERMINAL:
+            continue
+        new = [p for p in c["add"] if p not in task["scope"]]
+        if not new:
+            continue
+        task["scope"] = [*task["scope"], *new]
+        add_note(state, task["id"], author=author, text=f"{d['id']} widened the scope: {', '.join(new)}")
+        emit(state, "task.scope", actor=author, entity=task["id"], summary=f"{d['id']} added {', '.join(new)}", data={"added": new, "decision": d["id"]})
+
+
 def _note_applied_decision(state: State, d: dict, author: str):
-    """A decision that steers existing tasks reaches them as task notes instead of new tasks."""
+    """A decision that steers existing tasks reaches them as task notes instead of new tasks.
+    Scope changes it carries are applied at the same moment, when the decision is approved."""
+    _apply_scope_changes(state, d, author)
     for tid in d.get("applies_to") or []:
         task = find_task(state, tid)
         if task and task["status"] not in TERMINAL:
@@ -225,6 +273,7 @@ def record_meeting(state: State, draft: dict) -> dict:
             "tradeoffs": d.get("tradeoffs") or [],
             "objections": draft.get("dissent") or [],
             "risks": d.get("risks") or [],
+            "scope_changes": d.get("scope_changes") or [],
             "participants": participants,
             "approval_status": "PROPOSED" if draft["outcome"] == "DECIDED" else "NEEDS_FOUNDER",
             "founder_required": d.get("founder_required") is True,

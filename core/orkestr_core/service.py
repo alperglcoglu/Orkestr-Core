@@ -156,6 +156,12 @@ class Project:
         return self.mutate(lambda s: st.record_approval_result(s, approval_id, result, actor="founder"))
 
     def decide_decision(self, decision_id: str, action: str, option: str | None = None, note: str | None = None):
+        if action == "approve":
+            d = self.store.load().decisions.get(decision_id) or {}
+            policy = self.store.policy()["policy"]
+            hit = [p for c in d.get("scope_changes") or [] for p in pol.protected_overlap(c["add"], policy)]
+            if hit:
+                raise OrkestrError(f"{decision_id} would widen a task scope over protected paths ({', '.join(hit)}); reject it or change the policy first.", "E_POLICY")
         return self.mutate(lambda s: rec.decide_decision(s, decision_id, action, by="founder", option=option, note=note))
 
     def authorize_task(self, task_id: str):

@@ -799,6 +799,9 @@ function meetingDetail(m, decision) {
             ['Selected', decision.selected_option ?? '—'],
             ['Rationale', decision.rationale || '—'],
             ['Founder required', decision.founder_required ? 'yes' : 'no'],
+            decision.scope_changes?.length
+              ? ['Scope changes', h('span', { class: 'mono' }, decision.scope_changes.map((c) => `${c.task_id}: + ${c.add.join(', ')}`).join('  '))]
+              : null,
             decision.decided_by ? ['Decided by', `${decision.decided_by}${decision.note ? ` — ${decision.note}` : ''}`] : null,
           ]),
           ['PROPOSED', 'NEEDS_FOUNDER'].includes(decision.approval_status)

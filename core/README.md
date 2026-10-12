@@ -230,7 +230,7 @@ expand globs in `node --test`, so pass the directory.
   (finding 18).
 - Protected-path deny rules for agents have not been verified against a live Claude Code
   call. The core's Git check after each call is the enforcement either way.
-- A meeting decision cannot change a task's scope yet (finding 21), so a scope mistake in
-  the plan can loop until the per-task call limit stops the run.
+- A meeting decision can widen the scope of the tasks it steers (finding 21); this has not
+  been seen in a live run yet.
 - The dashboard serves one project, the one `dashboard` was started in, for one local
   founder. Live updates use polling.

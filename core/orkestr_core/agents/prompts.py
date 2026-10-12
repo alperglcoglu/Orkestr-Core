@@ -144,6 +144,9 @@ Use outcome DECIDED with decision.selected_option when the evidence supports one
 ESCALATED (selected_option null) when the founder must choose; NO_DECISION otherwise. Set
 decision.founder_required for product, budget, legal, or security-policy matters. Record
 material dissent, even when the participants chose the same option for different reasons.
+If the decision means one of the tasks above must change files outside its current scope,
+list them in decision.scope_changes (task_id and the path patterns to add). Scopes are only
+ever widened this way, and only when the decision is approved.
 """
 
 
