@@ -1353,6 +1353,8 @@ Do not assume that the entire plugin can be converted into a web application wit
 
 ## Phase 4 — Dashboard and expanded autonomy
 
+The binding scope of the first Phase 4 slice is in `PHASE4_IMPLEMENTATION.md`.
+
 Only after the standalone core is stable:
 
 - Build the founder dashboard.
