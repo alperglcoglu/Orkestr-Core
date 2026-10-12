@@ -1,10 +1,13 @@
 """Generated Markdown views and reports, ported from render.mjs (MASTER_SPEC §16).
 
 Views are derived from records and never edited by hand. The text matches the Phase 1
-views so a project looks the same whether the plugin or the core manages it.
+views so a project looks the same whether the plugin or the core manages it. The completion
+report is the exception: it separates scope checks from tests (PHASE4_IMPLEMENTATION.md §4).
 """
 
 from __future__ import annotations
+
+from .state import SCOPE_CHECK_COMMAND
 
 
 def _banner(rid: str) -> str:
@@ -218,9 +221,14 @@ def render_report(project: dict, tasks: list[dict], approvals: list[dict], decis
     done = by("COMPLETED")
     out.append("\n".join(f"- {t['id']} — {t['title']} (owner: {t['owner']})" for t in done) if done else "- (no completed tasks)")
 
-    out += ["", "## Checks that actually ran", ""]
+    # Scope checks are bookkeeping, not tests (phase2/FINDINGS.md #13), so they are listed apart.
     runs = [(t, e) for t in tasks for e in t["evidence"] if e["type"] in ("test", "check") and e["result"] != "not_run"]
-    out.append("\n".join(f"- {t['id']}: `{e.get('command')}` → {e['result']} — {e['summary']}" for t, e in runs) if runs else "- (no checks recorded)")
+    checks = [(t, e) for t, e in runs if e.get("command") != SCOPE_CHECK_COMMAND]
+    scopes = [(t, e) for t, e in runs if e.get("command") == SCOPE_CHECK_COMMAND]
+    out += ["", "## Tests and checks run", ""]
+    out.append("\n".join(f"- {t['id']}: `{e.get('command')}` → {e['result']} — {e['summary']}" for t, e in checks) if checks else "- (no checks recorded)")
+    if scopes:
+        out += ["", "### Scope checks", "", "\n".join(f"- {t['id']}: {e['result']} — {e['summary']}" for t, e in scopes)]
     not_run = [f"- {t['id']}: not run — {e['summary']}" for t in tasks for e in t["evidence"] if e["result"] == "not_run"]
     if not_run:
         out += ["", "### Not run", "", "\n".join(not_run)]

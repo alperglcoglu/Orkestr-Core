@@ -166,7 +166,7 @@ def test_completion_report_lists_work_done_checks_that_ran_assumptions_and_open_
     p.evidence("T-002", "test", "not_run", "no UI test runner yet", command=None)
     out = p.report()
     assert re.search(r"## What was done[\s\S]*T-001 — Build API", out)
-    assert re.search(r"## Checks that actually ran[\s\S]*`npm test` → passed — 12 passed", out)
+    assert re.search(r"## Tests and checks run[\s\S]*`npm test` → passed — 12 passed", out)
     assert re.search(r"### Not run[\s\S]*T-002: not run — no UI test runner yet", out)
     assert re.search(r"## Assumptions[\s\S]*SQLite is acceptable", out)
     assert re.search(r"## Unresolved[\s\S]*T-002 READY", out)
