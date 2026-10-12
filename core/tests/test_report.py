@@ -38,3 +38,12 @@ def test_only_scope_checks_means_no_tests_recorded(tmp_path):
     out = p.report()
     assert re.search(r"## Tests and checks run\n\n- \(no checks recorded\)", out)
     assert "### Scope checks" in out
+
+
+def test_founder_tasks_are_listed_as_needing_the_founder(tmp_path):
+    p = P(tmp_path, autonomy="bounded")
+    p.add_task("Decide the leftover-cent policy", "founder")
+    p.project.authorize_task("T-001")
+    assert p.task("T-001")["status"] == "READY"
+    assert re.search(r"## Needs the founder\n\n[\s\S]*- Your task T-001: Decide the leftover-cent policy", p.report())
+    assert re.search(r"### Your tasks\n\n- T-001 \[READY\] Decide the leftover-cent policy", p.status())

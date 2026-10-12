@@ -201,6 +201,11 @@ def render_retro(r: dict) -> str:
 RENDERERS = {"meetings": render_meeting, "decisions": render_decision, "reviews": render_review, "retros": render_retro}
 
 
+def _founder_tasks(tasks: list[dict]) -> list[dict]:
+    """Founder-owned tasks a run waits for; the engine stops at WAITING_FOUNDER for them."""
+    return [t for t in tasks if t["owner"] == "founder" and t["status"] in ("READY", "IN_PROGRESS")]
+
+
 def _assumption_lines(project: dict) -> str:
     items = project.get("assumptions") or []
     if not items:
@@ -259,6 +264,7 @@ def render_report(project: dict, tasks: list[dict], approvals: list[dict], decis
             if "Founder" in ((t.get("failure") or {}).get("next_action") or "")
         ],
         *[f"- Authorize or drop {t['id']}: {t['title']}" for t in tasks if not t["authorized"] and t["status"] not in ("CANCELLED", "COMPLETED")],
+        *[f"- Your task {t['id']}: {t['title']}" for t in _founder_tasks(tasks)],
     ]
     out.append("\n".join(founder) if founder else "- Nothing.")
 
@@ -315,6 +321,8 @@ def render_status(project: dict, tasks: list[dict], approvals: list[dict], decis
     )
     out += ["", "### Decisions waiting for the founder", ""]
     out.append("\n".join(f"- {d['id']} [{d['approval_status']}] {d['question']}" for d in waiting) if waiting else "- (none)")
+    out += ["", "### Your tasks", ""]
+    out.append("\n".join(f"- {t['id']} [{t['status']}] {t['title']}" for t in _founder_tasks(tasks)) or "- (none)")
     out += ["", "### Tasks waiting for authorization", ""]
     out.append(
         "\n".join(f"- {t['id']} — {t['title']} (source: {t['source']['type']}{', decision ' + t['decision_id'] if t.get('decision_id') else ''})" for t in unauthorized)
