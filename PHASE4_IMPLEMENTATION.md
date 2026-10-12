@@ -255,4 +255,11 @@ Each step is a separate commit on a branch (not `main`). The phase goes to `main
 
 ## 13. Changes made during implementation
 
-Empty until implementation starts. Any refinement of this document during implementation is listed here with its reason, as in PHASE3 §16.
+Any refinement of this document during implementation is listed here with its reason, as in PHASE3 §16.
+
+| Section | Change | Reason |
+| :- | :- | :- |
+| §4 0.1 | Only the core renderer is changed; the plugin renderer keeps the old heading | Founder decision (2026-10-12): the plugin is finished and released separately |
+| §4 0.2 | A retro is its own run (`kind = 'retro'`). It ends COMPLETED, FAILED, or CANCELLED, never continues or supersedes a workflow run, and `status` keeps showing the latest workflow run | A retro must not take over an open run that waits for the founder |
+| §4 0.3 | The report's "Needs the founder" and the status view's new "Your tasks" list founder-owned tasks that are READY or IN_PROGRESS | Run 4 (first attempt): the run stopped for a founder task while the report said "Nothing." |
+| §4 0.3 | The plan output gains `decisions_needed` (question, options, the `#n` tasks that wait). The engine holds a team meeting on each one before those tasks start; a decision that needs the founder stops the run, while no decision or a rejected one lets the tasks go ahead. The plan prompt tells the planner not to create founder-owned tasks for design choices | Run 4 (first attempt): with no other way to express an open design choice, the planner turned it into a founder task, so no meeting could happen. Founder decision (2026-10-12) |

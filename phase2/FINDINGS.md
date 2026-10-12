@@ -71,3 +71,21 @@ Observations:
 | 12 | The security review (triggered by `package.json` in the task scope) found a confirmed bug: names such as `__proto__` corrupted results. The fix call resolved it and both reviews passed | Positive | None; the independent second review paid for itself |
 | 13 | "Checks that actually ran" in the report also lists `orkestr scope check` lines, which are bookkeeping, not tests | Low | Open; the same in the plugin's report. Separate them in both renderers |
 | 14 | The run used 11 calls against an estimate of 10–15 for the plugin protocol; the planned 3-task cap was respected | Info | — |
+
+## Run 4 — standalone core, meeting drill (2026-10-12)
+
+Setup: as run 3 (`orkestr-core init`, local Git, no remote, `--model sonnet`), Claude Code 2.1.296, bounded autonomy, `max_fix_attempts: 1`. The goal was the `split` goal, plus one constraint that left a real design question open on purpose: who gets the leftover cents (first people, the payer, or round up). The constraint said the team must decide it. Purpose: exercise a meeting live (PHASE4_IMPLEMENTATION.md §4, step 0.3).
+
+**First attempt** (1 agent call): the planner turned the open question into a founder-owned task (`T-001 Decide leftover-cent policy`, the other tasks depending on it), and the run stopped at `WAITING_FOUNDER`. No meeting could happen: the core had no way for a plan to say "the team must decide this first".
+
+**Second attempt** on a fresh sandbox, after fixes 15 and 16 (11 agent calls, then 1 for `retro`): scorecard (`--rerun`) has no ❌. The planner listed the question in `decisions_needed`. `M-001` (backend-engineer, tech-lead) agreed on O1 in one round, and `D-001` was auto-approved as a routine decision. The decision reached T-001 and T-002 as task notes before they started. All 3 tasks completed with no fix attempt, and 4 independent reviews passed (one was a security review). Every recorded command re-ran green. Usage: 62 turns, about 387k input and 24k output tokens; Claude Code's estimate is $0.67 (plan usage under a subscription). `orkestr-core retro` then recorded `RT-001` with 5 evidence-backed lessons.
+
+| # | Problem | Severity | Fix |
+| :- | :- | :- | :- |
+| 15 | A plan could express an open design choice only as a founder task, so no meeting happened and the founder got a routine decision | High | Plan output `decisions_needed`; the engine holds a team meeting before the blocked tasks start; the plan prompt reserves founder tasks for work only the founder can do (tests added) |
+| 16 | The run waited for a founder task while the report's "Needs the founder" said "Nothing." | Medium | Report and status list founder-owned READY/IN_PROGRESS tasks (test added) |
+| 17 | Implementers believed Bash was denied entirely (their heredoc file writes were denied, correctly) and never ran the allowed test commands, so they wrote tests blind. The core's own runs still verified everything. `RT-001` found the same problem on its own | Medium | Implement prompt: write files with Write/Edit; Bash only for the listed test command forms, one command at a time |
+| 18 | Reviews passed with "suspected" findings that nobody triaged (R-001, R-002, R-004); found by `RT-001` | Low | Open. Candidate for a later step: turn suspected findings on a PASS review into task notes |
+| 19 | The planner's `context` for the decision already recommended an option, which may anchor the meeting | Info | Watch in later runs |
+
+Still not exercised live: a recovery meeting (no task failed even with `max_fix_attempts: 1`), a decision that needs the founder, and a second discussion round.

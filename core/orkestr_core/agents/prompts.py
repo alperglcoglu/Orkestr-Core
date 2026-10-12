@@ -65,7 +65,9 @@ Step: IMPLEMENT one task.
 {_task_block(task)}
 {extra}
 Make the smallest correct change inside the scope, with tests. Edit existing files; never
-replace a file's whole content when a focused edit works. You may run the project's tests.
+replace a file's whole content when a focused edit works. Create and change files with the
+Write and Edit tools. Bash is allowed only for the test command forms ({', '.join(allowed_tests)}),
+one command at a time, without `cd`, pipes, or `&&`; run them to check your work.
 Return:
 - summary: what you changed and why;
 - changed_files: every file you created or modified;
