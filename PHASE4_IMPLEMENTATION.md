@@ -2,7 +2,7 @@
 
 You are the implementation engineer for Phase 4. Read `MASTER_SPEC.md`, `PHASE3_IMPLEMENTATION.md`, `core/README.md`, and `phase2/FINDINGS.md` first. This document is the binding Phase 4 scope. If the documents disagree, report the conflict instead of choosing silently.
 
-Status: **draft, waiting for founder approval.** No Phase 4 code is written before approval.
+Status: **approved by the founder on 2026-10-12.** Where the implementation refines a detail, this document is updated to match; §13 lists those changes.
 
 ## 1. Objective
 
@@ -24,6 +24,7 @@ Out of scope for this phase (later Phase 4 slices or Phase 5): additional tool i
 | Dashboard technology | Plain HTML, CSS, and JavaScript (ES modules), served by the existing FastAPI app. No build step, no npm packages, no CDN |
 | Phase 3 open items | Closed first, as step 0 of this phase |
 | Order of work | This specification first; implementation only after approval |
+| Plugin | Finished and released separately (`alperglcoglu/orkestr`). Phase 4 does not modify `plugins/orkestr/`; the core keeps reading its agent prompts and guard script |
 
 ## 3. Budget and dependency constraints
 
@@ -37,7 +38,7 @@ Out of scope for this phase (later Phase 4 slices or Phase 5): additional tool i
 
 | # | Item | Work |
 | :- | :- | :- |
-| 0.1 | Finding #13: "Checks that actually ran" lists scope checks | Split the report section into "Tests and checks run" and "Scope checks" in both renderers (`core/orkestr_core/domain/render.py`, `plugins/orkestr/scripts/lib/render.mjs`). Keep the parity test green. Scope checks never count as test evidence (unchanged) |
+| 0.1 | Finding #13: "Checks that actually ran" lists scope checks | Split the report section into "Tests and checks run" and "Scope checks" in the core renderer (`core/orkestr_core/domain/render.py`). The plugin renderer is not changed (§2). Scope checks never count as test evidence (unchanged) |
 | 0.2 | No `retro` command in the core | `orkestr-core retro` and `POST /retros`: one bounded agent call (`tech-lead`, `read_only` profile, `RetroOutput` schema already exists) over the run history, written as an `RT-###` record and mirrored to `.orkestr/`. Counts against the run's agent-call limit. Refused while a run is active |
 | 0.3 | No live meeting has run | A live drill on a fresh `split` sandbox **with founder consent**: run with `max_fix_attempts: 1` and a task whose `verify` command fails until a design choice is made, so a recovery meeting is triggered for real. Recorded in `phase2/FINDINGS.md` as "Run 4". If no meeting happens, record that honestly and do not fake one |
 | 0.4 | Usage-limit result shape unknown | Not forced (it would waste plan usage). If a run hits a real limit at any point in Phase 4, its JSON is saved as a redacted fixture and the matcher is tightened. Until then the Phase 3 safe-side rule stays |
@@ -207,7 +208,7 @@ core/tests/
   - API: every new route, token required, `Host` check, dashboard served without a token but data routes still refused, security headers present;
   - dashboard sources: no external URL, no `innerHTML`-style sinks, no inline script or style;
   - migration `0001` → `0002` on a Phase 3 database;
-  - step 0: renderer split (core and plugin), retro command;
+  - step 0: renderer split, retro command;
   - `node --test core/tests/ui/*.test.mjs`: layering and ordering on chains, diamonds, cycles (rejected, as in the state tool), and wide graphs; formatting helpers.
 - All Phase 3 tests and the plugin suite (`node --test "plugins/orkestr/tests/*.test.mjs"`) must still pass.
 - **Browser check (manual, no model use):** with a fake-executor fixture project, open every view in a real browser (the Claude desktop browser pane or Chrome), check light and dark mode, 1280 px and 768 px widths, and that untrusted text containing `<img src=x onerror=…>` shows as text. Record the result in the PR.
@@ -250,7 +251,7 @@ Each step is a separate commit on a branch (not `main`). The phase goes to `main
 - **Open (verified in step 8):** whether `permissions.deny` rules from `--settings` apply under `--restricted` and `dontAsk`. The core's own Git check is the enforcement either way; the result decides only whether the guardrail is documented as working.
 - **Open (founder, later slice):** custom roles, additional tool integrations, and business agents. Each needs evidence from real use first (MASTER_SPEC §20).
 - **Open (founder, from Phase 3):** whether the plugin should call the core's API instead of its own state tool.
-- **Repository state (2026-10-12):** `origin/main` on GitHub now points to the plugin release history (`b2eb32a`), not to the merged Phase 3 work, because `origin` and `release` are the same repository. The Phase 1–3 history exists in the local `main`. This branch starts from the local `main`. The founder decides how the two histories are published before the Phase 4 pull request.
+- **Repositories:** the core is developed in `alperglcoglu/Orkestr-Core` (remote `origin`). The plugin is released from `alperglcoglu/orkestr` and is not changed in this phase.
 
 ## 13. Changes made during implementation
 
