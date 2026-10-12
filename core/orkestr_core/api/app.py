@@ -13,7 +13,7 @@ from typing import Any, Callable
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-from starlette.staticfiles import StaticFiles
+from fastapi.staticfiles import StaticFiles
 
 from ..constants import LOCK_FILE
 from ..domain import state as st
