@@ -89,3 +89,24 @@ Setup: as run 3 (`orkestr-core init`, local Git, no remote, `--model sonnet`), C
 | 19 | The planner's `context` for the decision already recommended an option, which may anchor the meeting | Info | Watch in later runs |
 
 Still not exercised live: a recovery meeting (no task failed even with `max_fix_attempts: 1`), a decision that needs the founder, and a second discussion round.
+
+## Run 5 — dashboard, agent team, and policy (2026-10-12)
+
+Setup: a fresh `split` sandbox. The goal now names the leftover-cent rule (first people in the list). Team: `qa-engineer` on `haiku`, other roles on the run's `sonnet`. Policy v1 protected `README.md`. The run was started from the dashboard's **Start run** form (limit 20 calls) and watched there and through the API (PHASE4_IMPLEMENTATION.md §9, live check).
+
+Result: the run stopped at `WAITING_FOUNDER` after 13 agent calls, because T-001 reached its per-task limit (8/8). T-002 and T-003 were not started. Usage: 64 turns, about 427k input and 34k output tokens; Claude Code's estimate is $0.47. Nothing was continued on the founder's behalf.
+
+What worked:
+
+- The dashboard started the run, showed the run live (steps, agent calls, events), and listed the stop under "Needs you".
+- The team setting reached the calls: `agent_execution` shows `claude-haiku-5-5` for both QA reviews and `claude-sonnet-5-5` for every other call. The run's `run.settings` event recorded policy v1 and the team change.
+- The protected `README.md` was never changed, and no task scope included it.
+- The haiku reviewer requested changes twice. Its confirmed findings were real (an acceptance criterion contradicted the design; empty names were accepted; a precision gap).
+- The per-task call limit stopped a loop safely.
+- A second live meeting (`M-001`, raised by the implementer) was held, and its decision `D-001` was auto-approved.
+
+| # | Problem | Severity | Fix |
+| :- | :- | :- | :- |
+| 20 | The first plan was good and listed a design question in `decisions_needed`, but it was rejected for one verify command (`node bin/split.js …`). The planner's retry rewrote the whole plan: it dropped the design question and split the tests into another task, so T-001's verify command named a test file outside T-001's scope | Medium | Plan check: a verify command may not name a file that does not exist and is outside the scope of the task and its dependencies. The retry prompt now says to fix only the listed problems and keep the rest, including `decisions_needed` (tests added) |
+| 21 | `D-001` decided that the test file belongs in T-001's scope, but a decision cannot change a task's scope. The out-of-scope check kept failing until the per-task limit stopped the run | Medium | Open. Proposed: let a meeting synthesis propose scope changes for the tasks it steers, applied when the decision is approved, with the protected-path check. Founder decision needed |
+| 22 | Protected-path deny rules for agents were not triggered (no agent tried to edit `README.md`), so they are still unverified live | Info | The core's Git check remains the enforcement |

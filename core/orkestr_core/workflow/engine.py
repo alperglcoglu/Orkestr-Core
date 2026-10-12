@@ -523,7 +523,12 @@ class Engine:
             problems = self._plan_problems(out.output)
             if problems:
                 self._reserve_calls([None])
-                req.prompt += "\n\nYour plan was rejected:\n- " + "\n- ".join(problems) + "\nReturn a corrected plan."
+                req.prompt += (
+                    "\n\nYour plan was rejected:\n- "
+                    + "\n- ".join(problems)
+                    + "\nFix only these problems and keep everything else in your plan as it was, including decisions_needed."
+                    + " Return the corrected plan."
+                )
                 out = self._execute(s["id"], req)
                 problems = self._plan_problems(out.output) if out.output else [out.error or "no output"]
                 if problems:
@@ -560,6 +565,8 @@ class Engine:
                 p = vf.command_problem(c, self._test_commands())
                 if p:
                     problems.append(f"task #{i + 1} verify command {c!r}: {p}")
+            for path in self._verify_paths_outside(t, tasks):
+                problems.append(f"task #{i + 1} verify command needs {path}, which does not exist and is outside the scope of the task and of the tasks it depends on; put it in the scope")
             if t.get("owner") in AGENT_ROLES and not self._enabled(t["owner"]):
                 problems.append(f"task #{i + 1} owner {t['owner']} is not in this project's team (enabled: {', '.join(tm.enabled_roles(self.team))})")
             hit = pol.protected_overlap(t["scope"], self.policy) if t.get("scope") else []
@@ -574,6 +581,25 @@ class Engine:
         except OrkestrError as err:
             problems.append(err.message)
         return problems
+
+    def _verify_paths_outside(self, task: dict, plan_tasks: list[dict]) -> list[str]:
+        """Files a verify command names that nobody may create: they do not exist and are outside
+        the scope of the task and of the plan tasks it depends on (phase2/FINDINGS.md #20)."""
+        scopes = list(task.get("scope") or [])
+        for ref in task.get("depends_on") or []:
+            if re.fullmatch(r"#[1-9]\d*", ref) and int(ref[1:]) <= len(plan_tasks):
+                scopes += plan_tasks[int(ref[1:]) - 1].get("scope") or []
+        if not task.get("scope"):
+            return []  # an unscoped task may create anything
+        out = []
+        for c in task.get("verify") or []:
+            for word in c.split()[1:]:
+                if word.startswith("-") or not re.search(r"\.[A-Za-z0-9]{1,5}$", word):
+                    continue  # flags and directories are not checked
+                path = word.replace("\\", "/").removeprefix("./")
+                if not (self.root / path).exists() and not file_in_scope(path, scopes):
+                    out.append(path)
+        return list(dict.fromkeys(out))
 
     # ------------------------------------------------------------------
     # Implementation waves

@@ -126,3 +126,32 @@ def test_the_plan_prompt_offers_decisions_instead_of_founder_tasks(project, fake
     engine(project, fake).run()
     prompt = fake.calls("plan")[0].prompt
     assert "decisions_needed" in prompt and "Do not create founder-owned tasks for such choices" in prompt
+
+
+# --- plan consistency (phase2/FINDINGS.md #20) ------------------------------------------------
+
+
+def test_a_verify_command_naming_a_file_nobody_may_create_rejects_the_plan(project, fake):
+    bad = plan_output(
+        plan_task("Core", scope=("src/split.js",), verify=("node --test test/split.test.js",)),
+        plan_task("Tests", scope=("test/split.test.js",), verify=("node --test test/split.test.js",), depends_on=("#1",)),
+    )
+    fake.add("plan", bad, repeat=True)
+    run = engine(project, fake).run()
+    assert run["status"] == "WAITING_FOUNDER"
+    assert "task #1 verify command needs test/split.test.js" in run["status_reason"]
+    assert "task #2" not in run["status_reason"], "the file is in task #2's own scope"
+    retry = fake.calls("plan")[1].prompt
+    assert "keep everything else in your plan as it was, including decisions_needed" in retry
+
+
+def test_verify_files_in_a_dependency_scope_or_on_disk_are_fine(project, fake):
+    from conftest import write_files
+
+    write_files(project.root, {"tests/existing.test.mjs": PASSING_TEST})
+    ok = plan_output(
+        plan_task("Lib", scope=("src/**", "test/lib.test.js")),
+        plan_task("CLI", scope=("bin/**",), verify=("node --test test/lib.test.js", "node --test tests/existing.test.mjs", "node --test tests/"), depends_on=("#1",)),
+    )
+    eng = engine(project, fake)
+    assert not [p for p in eng._plan_problems(ok) if "verify command needs" in p]
