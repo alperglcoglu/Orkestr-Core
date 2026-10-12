@@ -15,8 +15,10 @@ from .constants import (
     PREFIX,
     TOKEN_FILE,
 )
+from .domain import policy as pol
 from .domain import records as rec
 from .domain import state as st
+from .domain import team as tm
 from .domain.errors import OrkestrError, non_empty, now
 from .domain.render import render_report, render_status
 from .domain.validate import validate_state
@@ -167,6 +169,43 @@ class Project:
 
     def cancel_project(self, reason: str):
         return self.mutate(lambda s: st.set_project_status(s, "cancel", reason=reason, by="founder"))
+
+    def set_autonomy(self, mode: str, reason: str):
+        if not non_empty(reason):
+            raise OrkestrError("A reason is required to change the autonomy mode.", "E_USAGE")
+
+        def apply(s):
+            st.set_autonomy(s, mode, by="founder")
+            s.events[-1]["summary"] = reason
+
+        return self.mutate(apply)
+
+    # -- teams and policies (PHASE4_IMPLEMENTATION.md §5, §6) ---------------------
+
+    def team(self) -> dict[str, dict]:
+        return self.store.team()
+
+    def set_team_role(self, role: str, change: dict) -> dict:
+        """Founder action. Applies from the next run, which snapshots the team when it starts."""
+        from .agents.definitions import load_agents
+
+        current = self.store.team().get(role) or tm.default_role(role)
+        definition = load_agents().get(role)
+        row = tm.apply_change(current, change, definition.max_turns if definition else None)
+        self.store.save_team_role(row, current)
+        return row
+
+    def policy(self) -> dict:
+        return self.store.policy()
+
+    def set_policy(self, policy: dict, reason: str) -> int:
+        """Founder action. Saves a new version; the next run uses it."""
+        if not non_empty(reason):
+            raise OrkestrError("A reason is required to change the policy.", "E_USAGE")
+        problems = pol.policy_problems(policy)
+        if problems:
+            raise OrkestrError("Policy rejected: " + "; ".join(problems), "E_POLICY")
+        return self.store.save_policy(pol.normalize(policy), reason)
 
     # -- reports -----------------------------------------------------------------
 

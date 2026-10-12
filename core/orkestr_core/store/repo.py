@@ -17,6 +17,7 @@ from ..constants import DATA_DIR_NAME, DB_FILE
 from ..domain.errors import OrkestrError, now
 from ..domain.redact import redact
 from ..domain.state import State
+from ..domain.team import default_team
 from . import db
 
 LESSONS_HEADER = "# Lessons learned\n\nAppended by orkestr retrospectives. Each lesson links to its evidence.\n"
@@ -477,5 +478,56 @@ class Store:
                 ts = now()
                 for path, sha in hashes.items():
                     conn.execute("INSERT INTO file_sync VALUES (?, ?, ?)", (path, sha, ts))
+        finally:
+            conn.close()
+
+    # -- teams and policies (PHASE4_IMPLEMENTATION.md §5, §6) ----------------------
+
+    def team(self) -> dict[str, dict]:
+        team = default_team()
+        for r in self.query("SELECT role, enabled, model, max_turns, instructions FROM team_role"):
+            team[r["role"]] = {**r, "enabled": bool(r["enabled"])}
+        return team
+
+    def save_team_role(self, row: dict, before: dict, actor: str = "founder"):
+        """One role change and its audit event, in one transaction."""
+        conn = self.connect()
+        try:
+            with db.transaction(conn):
+                ts = now()
+                conn.execute(
+                    "UPDATE team_role SET enabled = ?, model = ?, max_turns = ?, instructions = ?, updated_at = ? WHERE role = ?",
+                    (int(row["enabled"]), row["model"], row["max_turns"], redact(row["instructions"]), ts, row["role"]),
+                )
+                changed = {k: {"from": before.get(k), "to": row.get(k)} for k in ("enabled", "model", "max_turns", "instructions") if before.get(k) != row.get(k)}
+                self._insert_event(
+                    conn,
+                    {"ts": ts, "type": "team.update", "actor": actor, "entity": row["role"], "summary": f"Team role {row['role']} changed: {', '.join(changed) or 'no change'}", "data": changed},
+                    None,
+                )
+        finally:
+            conn.close()
+
+    def policy(self) -> dict:
+        r = self.query("SELECT * FROM policy_version ORDER BY version DESC LIMIT 1")[0]
+        return {**r, "policy": json.loads(r.pop("policy_json"))}
+
+    def policy_versions(self) -> list[dict]:
+        return [{**r, "policy": json.loads(r.pop("policy_json"))} for r in self.query("SELECT * FROM policy_version ORDER BY version")]
+
+    def save_policy(self, policy: dict, reason: str, actor: str = "founder") -> int:
+        """Appends a policy version and its audit event, in one transaction. Returns the version."""
+        conn = self.connect()
+        try:
+            with db.transaction(conn):
+                version = conn.execute("SELECT max(version) + 1 FROM policy_version").fetchone()[0]
+                ts = now()
+                conn.execute("INSERT INTO policy_version VALUES (?, ?, ?, ?, ?)", (version, json.dumps(redact(policy)), redact(reason), ts, actor))
+                self._insert_event(
+                    conn,
+                    {"ts": ts, "type": "policy.update", "actor": actor, "entity": f"policy v{version}", "to": str(version), "summary": reason, "data": {"version": version}},
+                    None,
+                )
+                return version
         finally:
             conn.close()
