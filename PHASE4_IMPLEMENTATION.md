@@ -268,3 +268,7 @@ Any refinement of this document during implementation is listed here with its re
 | §6.2 protected paths | The plan and meeting check applies to tasks that have a scope. Unscoped tasks are still caught by the Git check after the call | Rejecting every unscoped item (for example research) whenever a policy exists would block normal plans |
 | §5.2 | Open tasks owned by a disabled role stop the run before any work on them continues, including interrupted work | Found by a test: resuming an interrupted task bypassed the check |
 | §8 | Required roles are enforced by a `CHECK` constraint instead of a trigger | Simpler, and it covers inserts and updates alike |
+| §3, §7.1 | Static files are served with `fastapi.staticfiles.StaticFiles`, not `starlette.staticfiles` | The budget-rule test allows imports from the approved packages only; FastAPI re-exports the same class |
+| §7.3 | `GET /policy` also returns the hard caps and the always-allowed test commands | The dashboard shows them without keeping a second copy in JavaScript |
+| §7.4 | Added `ui/dom.js` (the only place that creates elements; text only) and `ui/package.json` (`"type": "module"`, so `node --test` loads the `.js` modules) | Safe element building in one place; Node 20 treats `.js` as CommonJS otherwise |
+| §9 | The node tests run with `node --test core/tests/ui/` | Node 20 does not expand globs in `node --test` |
