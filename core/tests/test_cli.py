@@ -83,3 +83,22 @@ def test_team_policy_and_autonomy_commands(tmp_path, capsys):
 
     code, out, _ = run(capsys, "--project", d, "autonomy", "supervised", "--reason", "review plans")
     assert code == 0 and Project(tmp_path).store.load().project["autonomy"] == "supervised"
+
+
+def test_commands_outside_a_project_fail_cleanly(tmp_path, capsys):
+    # run, retro, serve, and dashboard used to end in a FileNotFoundError traceback here.
+    d = str(tmp_path)
+    for args in (["run"], ["run", "a goal"], ["resume"], ["retro"], ["serve", "--port", "8799"],
+                 ["dashboard", "--no-open", "--port", "8799"], ["status"], ["report"], ["team", "show"],
+                 ["policy", "show"], ["approve", "plan"], ["export"]):
+        code, out, err = run(capsys, "--project", d, *args)
+        assert code == 1, args
+        assert "No orkestr-core project" in err and "orkestr-core init" in err, args
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_plugin_project_points_to_import(tmp_path, capsys):
+    (tmp_path / ".orkestr").mkdir()
+    (tmp_path / ".orkestr" / "project.json").write_text("{}", encoding="utf-8")
+    code, _, err = run(capsys, "--project", str(tmp_path), "run")
+    assert code == 1 and "orkestr-core import" in err
