@@ -15,8 +15,10 @@ from .constants import (
     PREFIX,
     TOKEN_FILE,
 )
+from .domain import policy as pol
 from .domain import records as rec
 from .domain import state as st
+from .domain import team as tm
 from .domain.errors import OrkestrError, non_empty, now
 from .domain.render import render_report, render_status
 from .domain.validate import validate_state
@@ -154,6 +156,12 @@ class Project:
         return self.mutate(lambda s: st.record_approval_result(s, approval_id, result, actor="founder"))
 
     def decide_decision(self, decision_id: str, action: str, option: str | None = None, note: str | None = None):
+        if action == "approve":
+            d = self.store.load().decisions.get(decision_id) or {}
+            policy = self.store.policy()["policy"]
+            hit = [p for c in d.get("scope_changes") or [] for p in pol.protected_overlap(c["add"], policy)]
+            if hit:
+                raise OrkestrError(f"{decision_id} would widen a task scope over protected paths ({', '.join(hit)}); reject it or change the policy first.", "E_POLICY")
         return self.mutate(lambda s: rec.decide_decision(s, decision_id, action, by="founder", option=option, note=note))
 
     def authorize_task(self, task_id: str):
@@ -168,6 +176,64 @@ class Project:
     def cancel_project(self, reason: str):
         return self.mutate(lambda s: st.set_project_status(s, "cancel", reason=reason, by="founder"))
 
+    def set_autonomy(self, mode: str, reason: str):
+        if not non_empty(reason):
+            raise OrkestrError("A reason is required to change the autonomy mode.", "E_USAGE")
+
+        def apply(s):
+            st.set_autonomy(s, mode, by="founder")
+            s.events[-1]["summary"] = reason
+
+        return self.mutate(apply)
+
+    def needs_founder(self) -> list[dict]:
+        """What waits for the founder, with the action that answers it (the dashboard's "Needs you")."""
+        state = self.store.load()
+        out = [{"kind": "approval", "id": a["id"], "text": f"[{a['category']}] {a['action']}"} for a in state.approvals if a["status"] == "PENDING"]
+        out += [{"kind": "decision", "id": d["id"], "text": d["question"]} for d in state.decisions.values() if d["approval_status"] in ("PROPOSED", "NEEDS_FOUNDER")]
+        for t in state.tasks:
+            if t["status"] in st.TERMINAL:
+                continue
+            if t["owner"] == "founder" and t["status"] in ("READY", "IN_PROGRESS"):
+                out.append({"kind": "founder_task", "id": t["id"], "text": t["title"]})
+            elif not t["authorized"]:
+                out.append({"kind": "authorize", "id": t["id"], "text": t["title"]})
+            elif t["status"] == "FAILED":
+                out.append({"kind": "retry", "id": t["id"], "text": (t.get("failure") or {}).get("next_action") or t["title"]})
+        run = self.latest_run()
+        if run and run["status"] == "WAITING_FOUNDER" and not out:
+            out.append({"kind": "run", "id": str(run["id"]), "text": run["status_reason"] or "the run waits for the founder"})
+        return out
+
+    # -- teams and policies (PHASE4_IMPLEMENTATION.md §5, §6) ---------------------
+
+    def team(self) -> dict[str, dict]:
+        return self.store.team()
+
+    def set_team_role(self, role: str, change: dict) -> dict:
+        """Founder action. Applies from the next run, which snapshots the team when it starts."""
+        from .agents.definitions import load_agents
+
+        current = self.store.team().get(role) or tm.default_role(role)
+        definition = load_agents().get(role)
+        row = tm.apply_change(current, change, definition.max_turns if definition else None)
+        self.store.save_team_role(row, current)
+        return row
+
+    def policy(self) -> dict:
+        return self.store.policy()
+
+    def set_policy(self, policy: dict, reason: str) -> int:
+        """Founder action. Saves a new version; the next run uses it."""
+        if not non_empty(reason):
+            raise OrkestrError("A reason is required to change the policy.", "E_USAGE")
+        problems = pol.policy_problems(policy)
+        limits = policy.get("limits") if isinstance(policy, dict) and isinstance(policy.get("limits"), dict) else {}
+        problems += pol.limit_conflicts(self.store.load().tasks, {**DEFAULT_LIMITS, **limits})
+        if problems:
+            raise OrkestrError("Policy rejected: " + "; ".join(problems), "E_POLICY")
+        return self.store.save_policy(pol.normalize(policy), reason)
+
     # -- reports -----------------------------------------------------------------
 
     def validate(self) -> dict:
@@ -181,7 +247,7 @@ class Project:
         return result
 
     def latest_run(self) -> dict | None:
-        rows = self.store.query("SELECT * FROM workflow_run ORDER BY id DESC LIMIT 1")
+        rows = self.store.query("SELECT * FROM workflow_run WHERE kind = 'run' ORDER BY id DESC LIMIT 1")
         return rows[0] if rows else None
 
     def usage(self, run_id: int | None = None) -> dict:

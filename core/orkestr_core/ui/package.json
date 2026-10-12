@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Orkestr dashboard sources (no dependencies, no build step). This file only tells Node that the .js files are ES modules, for node --test."
+}

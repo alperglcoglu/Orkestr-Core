@@ -71,3 +71,42 @@ Observations:
 | 12 | The security review (triggered by `package.json` in the task scope) found a confirmed bug: names such as `__proto__` corrupted results. The fix call resolved it and both reviews passed | Positive | None; the independent second review paid for itself |
 | 13 | "Checks that actually ran" in the report also lists `orkestr scope check` lines, which are bookkeeping, not tests | Low | Open; the same in the plugin's report. Separate them in both renderers |
 | 14 | The run used 11 calls against an estimate of 10–15 for the plugin protocol; the planned 3-task cap was respected | Info | — |
+
+## Run 4 — standalone core, meeting drill (2026-10-12)
+
+Setup: as run 3 (`orkestr-core init`, local Git, no remote, `--model sonnet`), Claude Code 2.1.296, bounded autonomy, `max_fix_attempts: 1`. The goal was the `split` goal, plus one constraint that left a real design question open on purpose: who gets the leftover cents (first people, the payer, or round up). The constraint said the team must decide it. Purpose: exercise a meeting live (PHASE4_IMPLEMENTATION.md §4, step 0.3).
+
+**First attempt** (1 agent call): the planner turned the open question into a founder-owned task (`T-001 Decide leftover-cent policy`, the other tasks depending on it), and the run stopped at `WAITING_FOUNDER`. No meeting could happen: the core had no way for a plan to say "the team must decide this first".
+
+**Second attempt** on a fresh sandbox, after fixes 15 and 16 (11 agent calls, then 1 for `retro`): scorecard (`--rerun`) has no ❌. The planner listed the question in `decisions_needed`. `M-001` (backend-engineer, tech-lead) agreed on O1 in one round, and `D-001` was auto-approved as a routine decision. The decision reached T-001 and T-002 as task notes before they started. All 3 tasks completed with no fix attempt, and 4 independent reviews passed (one was a security review). Every recorded command re-ran green. Usage: 62 turns, about 387k input and 24k output tokens; Claude Code's estimate is $0.67 (plan usage under a subscription). `orkestr-core retro` then recorded `RT-001` with 5 evidence-backed lessons.
+
+| # | Problem | Severity | Fix |
+| :- | :- | :- | :- |
+| 15 | A plan could express an open design choice only as a founder task, so no meeting happened and the founder got a routine decision | High | Plan output `decisions_needed`; the engine holds a team meeting before the blocked tasks start; the plan prompt reserves founder tasks for work only the founder can do (tests added) |
+| 16 | The run waited for a founder task while the report's "Needs the founder" said "Nothing." | Medium | Report and status list founder-owned READY/IN_PROGRESS tasks (test added) |
+| 17 | Implementers believed Bash was denied entirely (their heredoc file writes were denied, correctly) and never ran the allowed test commands, so they wrote tests blind. The core's own runs still verified everything. `RT-001` found the same problem on its own | Medium | Implement prompt: write files with Write/Edit; Bash only for the listed test command forms, one command at a time |
+| 18 | Reviews passed with "suspected" findings that nobody triaged (R-001, R-002, R-004); found by `RT-001` | Low | Open. Candidate for a later step: turn suspected findings on a PASS review into task notes |
+| 19 | The planner's `context` for the decision already recommended an option, which may anchor the meeting | Info | Watch in later runs |
+
+Still not exercised live: a recovery meeting (no task failed even with `max_fix_attempts: 1`), a decision that needs the founder, and a second discussion round.
+
+## Run 5 — dashboard, agent team, and policy (2026-10-12)
+
+Setup: a fresh `split` sandbox. The goal now names the leftover-cent rule (first people in the list). Team: `qa-engineer` on `haiku`, other roles on the run's `sonnet`. Policy v1 protected `README.md`. The run was started from the dashboard's **Start run** form (limit 20 calls) and watched there and through the API (PHASE4_IMPLEMENTATION.md §9, live check).
+
+Result: the run stopped at `WAITING_FOUNDER` after 13 agent calls, because T-001 reached its per-task limit (8/8). T-002 and T-003 were not started. Usage: 64 turns, about 427k input and 34k output tokens; Claude Code's estimate is $0.47. Nothing was continued on the founder's behalf.
+
+What worked:
+
+- The dashboard started the run, showed the run live (steps, agent calls, events), and listed the stop under "Needs you".
+- The team setting reached the calls: `agent_execution` shows `claude-haiku-5-5` for both QA reviews and `claude-sonnet-5-5` for every other call. The run's `run.settings` event recorded policy v1 and the team change.
+- The protected `README.md` was never changed, and no task scope included it.
+- The haiku reviewer requested changes twice. Its confirmed findings were real (an acceptance criterion contradicted the design; empty names were accepted; a precision gap).
+- The per-task call limit stopped a loop safely.
+- A second live meeting (`M-001`, raised by the implementer) was held, and its decision `D-001` was auto-approved.
+
+| # | Problem | Severity | Fix |
+| :- | :- | :- | :- |
+| 20 | The first plan was good and listed a design question in `decisions_needed`, but it was rejected for one verify command (`node bin/split.js …`). The planner's retry rewrote the whole plan: it dropped the design question and split the tests into another task, so T-001's verify command named a test file outside T-001's scope | Medium | Plan check: a verify command may not name a file that does not exist and is outside the scope of the task and its dependencies. The retry prompt now says to fix only the listed problems and keep the rest, including `decisions_needed` (tests added) |
+| 21 | `D-001` decided that the test file belongs in T-001's scope, but a decision cannot change a task's scope. The out-of-scope check kept failing until the per-task limit stopped the run | Medium | A meeting decision can carry `scope_changes` (patterns added to tasks it steers), applied when the decision is approved. Changes are refused for tasks the decision does not steer, for invalid patterns, for overlap with an active task, and over protected paths, also at founder approval (tests added). Not yet seen live |
+| 22 | Protected-path deny rules for agents were not triggered (no agent tried to edit `README.md`), so they are still unverified live | Info | The core's Git check remains the enforcement |

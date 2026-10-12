@@ -19,7 +19,7 @@ def test_migrations_are_recorded_and_idempotent(tmp_path):
     conn = p.project.store.connect()
     try:
         versions = [r[0] for r in conn.execute("SELECT version FROM schema_migrations")]
-        assert versions == [1]
+        assert versions == [1, 2]
         assert db.migrate(conn) == []
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -110,3 +110,40 @@ def test_the_core_refuses_to_write_a_project_the_plugin_manages(tmp_path):
     p.project.export(release=True)
     with pytest.raises(OrkestrError, match="managed by the plugin"):
         p.do(lambda s: st.add_assumption(s, "x"))
+
+
+# --- migration 0002: teams and policies (PHASE4_IMPLEMENTATION.md §8) ---------------------------
+
+
+def test_a_phase3_database_upgrades_without_losing_data(tmp_path, monkeypatch):
+    only_v1 = [m for m in db.migrations() if m[0] == 1]
+    monkeypatch.setattr(db, "migrations", lambda: only_v1)
+    p = P(tmp_path)
+    p.plan()
+    p.project.store.execute("INSERT INTO workflow_run (kind, status, options_json, started_at) VALUES ('run', 'COMPLETED', '{}', 'x')")
+    monkeypatch.undo()
+
+    store = p.project.store
+    assert [r["version"] for r in store.query("SELECT version FROM schema_migrations")] == [1, 2]
+    assert [t["id"] for t in store.load().tasks] == ["T-001", "T-002"]
+    assert store.query("SELECT policy_version FROM workflow_run") == [{"policy_version": None}]
+    assert len(store.team()) == 10 and all(r["enabled"] for r in store.team().values())
+    assert store.policy()["version"] == 0 and store.policy()["policy"]["protected_paths"] == []
+
+
+def test_team_and_policy_tables_enforce_their_rules(tmp_path):
+    store = P(tmp_path).project.store
+    for sql in (
+        "UPDATE team_role SET enabled = 0 WHERE role = 'qa-engineer'",
+        "UPDATE team_role SET model = '--bare' WHERE role = 'researcher'",
+        "UPDATE team_role SET max_turns = 0 WHERE role = 'researcher'",
+        "DELETE FROM team_role WHERE role = 'researcher'",
+        "INSERT INTO team_role (role, updated_at) VALUES ('cfo', 'x')",
+        "UPDATE policy_version SET reason = 'x'",
+        "DELETE FROM policy_version",
+        "INSERT INTO policy_version VALUES (7, '{}', 'r', 'x', 'founder')",
+        "INSERT INTO policy_version VALUES (1, '[]', 'r', 'x', 'founder')",
+        "INSERT INTO policy_version VALUES (1, '{}', ' ', 'x', 'founder')",
+    ):
+        with pytest.raises(sqlite3.Error):
+            store.execute(sql)

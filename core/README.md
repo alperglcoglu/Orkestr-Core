@@ -1,15 +1,18 @@
 # orkestr-core
 
-The standalone orchestration core of Orkestr (Phase 3). It runs the Orkestr workflow
+The standalone orchestration core of Orkestr. It runs the Orkestr workflow
 (plan → build → test → review → fix → meetings → completion report) as deterministic Python
 code, and calls AI agents only for well-defined steps. Every agent answer is validated
-against a schema before it changes anything, and the core runs the tests itself.
+against a schema before it changes anything, and the core runs the tests itself. Phase 4
+adds a founder dashboard, configurable agent teams, and permission policies.
 
-The binding scope is [`PHASE3_IMPLEMENTATION.md`](../PHASE3_IMPLEMENTATION.md).
+The binding scopes are [`PHASE3_IMPLEMENTATION.md`](../PHASE3_IMPLEMENTATION.md) and
+[`PHASE4_IMPLEMENTATION.md`](../PHASE4_IMPLEMENTATION.md).
 
-> **Status:** implemented, tested with a scripted executor (134 tests), and validated live:
-> one full run on the Phase 2 `split` project completed 3 tasks in 11 agent calls with no
-> founder question (see `phase2/FINDINGS.md`, run 3).
+> **Status:** Phase 3 implemented and validated live (`phase2/FINDINGS.md`, runs 3 and 4).
+> Phase 4 implemented, tested with a scripted executor (259 Python and 18 dashboard tests),
+> checked in a real browser, and used live once: a dashboard-started run with a team
+> override and a protected path (`phase2/FINDINGS.md`, run 5).
 
 ## How it differs from the plugin
 
@@ -62,8 +65,79 @@ orkestr-core report
 | `pause`, `resume`, `cancel [--project-cancel --reason R]` | Run control. `cancel` stops running agent processes. Tasks keep their state. |
 | `approve <A-###\|D-###\|plan> [--option O] [--note N]`, `reject <A-###\|D-###> --reason R` | Founder decisions. |
 | `authorize <T-###>`, `retry <T-###>`, `approval-result <A-###> --result R` | Founder actions. |
-| `status`, `report`, `validate` | Reports and validation. |
+| `status`, `report`, `validate` | Reports and validation. The report lists tests and scope checks separately. |
+| `retro [--scope S] [--model M]` | One `tech-lead` agent call (read-only) that reviews the project history and records an `RT-###` retrospective. It is its own run and never continues or replaces a workflow run. |
 | `serve [--port 8765]` | Starts the local API. |
+| `dashboard [--port 8765] [--no-open]` | Starts the local API and opens the founder dashboard in your browser. |
+| `team show`, `team set <role> [--enable\|--disable] [--model M] [--max-turns N] [--instructions-file F]` | Shows or changes the agent team. `--model ""` and `--max-turns 0` clear a value. |
+| `policy show\|history`, `policy set <file.json> --reason R` | Shows or changes the permission policy. Every change is a new version. |
+| `autonomy bounded\|supervised --reason R` | Changes the autonomy mode. |
+
+### Dashboard
+
+```bash
+orkestr-core dashboard
+```
+
+The dashboard opens at `http://127.0.0.1:8765/`. It shows what needs you (approvals,
+decisions, your own tasks, failed tasks), the run in progress with its agent calls and
+usage, the task board, the dependency graph, meetings and decisions, the team, the policy,
+and the latest report and retrospective. Every founder action from the CLI is also a button.
+While a run is active the page refreshes every 2 seconds, and every 15 seconds otherwise.
+
+- The page holds no project data. It reads everything from the token-protected API.
+- The browser receives the token in the address fragment (`#token=…`), which is never sent
+  to a server. The page moves it into the tab's session storage and removes it from the
+  address bar. Do not share the address the command opens.
+- The page loads nothing from the network: no CDN, fonts, or analytics. A strict
+  Content-Security-Policy forbids inline scripts. Project text, such as agent output, is
+  always shown as text, never as HTML.
+- The server answers only to `127.0.0.1:<port>` and `localhost:<port>`.
+- It uses plain HTML, CSS, and JavaScript modules, with no build step and no npm packages.
+
+### Agent team
+
+Each role can be switched off and given its own model, a lower turn limit, and extra
+instructions (at most 2,000 characters, added after the role prompt). `product-manager`,
+`tech-lead`, `qa-engineer`, and `security-reviewer` cannot be switched off. Tool permissions
+and limits are never part of a team.
+
+The model is chosen in this order: the role's model, then the run's `--model`, then Claude
+Code's default. A plan that gives work to a disabled role is rejected. A run with open tasks
+owned by a disabled role stops and asks you.
+
+### Permission policy
+
+A policy can only tighten the rules, with one exception: it can add test commands.
+
+```json
+{
+  "test_commands": ["go test ./..."],
+  "protected_paths": ["LICENSE", ".github/**"],
+  "approval_paths": ["src/billing/**"],
+  "security_review_paths": ["src/auth/**"],
+  "limits": { "max_agent_calls_per_run": 40, "max_fix_attempts": 2 }
+}
+```
+
+- `test_commands`: extra command prefixes the core runs as tests and agents may run. Shells,
+  bare interpreters (`python`, `node`, `npx`, and so on), `git`, shell operators, and
+  anything the guard flags are refused.
+- `protected_paths`: no task may change these files. The core's Git check after each call
+  fails the task when one changed. Plans and meetings may not scope a task over them, and
+  agents also get deny rules for them.
+- `approval_paths`: a task whose scope touches these waits for your approval before it starts.
+- `security_review_paths`: tasks touching these always get a security review.
+- `limits`: within hard caps (200 calls per run, 20 per task, 5 fix attempts, 2 recovery
+  meetings, 4 parallel tasks, 6 meeting participants, 3 discussion rounds). Once you have a
+  policy, a limit left out of it falls back to its default.
+
+No policy can remove the approvals for push, deploy, publish, deletes, spending, permission
+changes, or external messages. A policy also cannot make the core carry out such an action
+itself.
+
+The team and the policy in force are taken whenever a run starts or continues, and are
+recorded on the run.
 
 ### Founder consultation
 
@@ -87,9 +161,11 @@ with `approval-result`.
 is git-ignored, and is never logged. The OpenAPI document is at `/openapi.json`, and
 `/docs` shows it in a browser. Main endpoints:
 
-- `GET /status`, `/report`, `/tasks`, `/tasks/{id}`, `/approvals`, `/runs`, `/runs/{id}/steps`, `/history?after=<ts>`;
+- `GET /status`, `/report`, `/tasks`, `/tasks/{id}`, `/approvals`, `/retros`, `/runs`, `/runs/{id}/steps`, `/history?after=<ts>`;
 - `POST /approvals/{id}/grant|reject`, `/decisions/{id}/approve|reject`, `/tasks/{id}/authorize|retry`;
-- `POST /runs`, `/runs/{id}/pause|resume|cancel`.
+- `POST /runs`, `/runs/{id}/pause|resume|cancel`, `/retros`;
+- Phase 4 reads: `GET /project`, `/graph`, `/meetings`, `/decisions`, `/runs/{id}/executions`, `/tasks/{id}/tests`, `/team`, `/policy`, `/policy/versions`;
+- Phase 4 founder actions: `PUT /team/{role}`, `/policy`, `/project/autonomy`.
 
 ## Cost and safety
 
@@ -129,7 +205,11 @@ Node.js is missing. The plugin's own suite still passes:
 
 ```bash
 node --test plugins/orkestr/tests/
+node --test core/tests/ui/
 ```
+
+The second command tests the dashboard's layout and formatting modules. Node 20 does not
+expand globs in `node --test`, so pass the directory.
 
 ## Known limitations
 
@@ -138,7 +218,19 @@ node --test plugins/orkestr/tests/
   shape of a usage-limit error has not been observed yet. Until it is, any error that
   mentions a limit is treated as a usage limit, and the run stops.
 - Only one project per database and one local founder. There are no user accounts.
-- Meetings are held for recovery and for design questions raised by an implementer. Other
-  MASTER_SPEC §6.1 triggers are not detected automatically yet.
-- Retrospectives are recorded through the domain layer, but `orkestr-core` has no `retro`
-  command yet.
+- Meetings are held:
+  - for design choices the plan leaves open;
+  - for design questions an implementer raises;
+  - for recovery.
+
+  Run 4 exercised a plan-time meeting live. A recovery meeting, a decision that needs the
+  founder, and a second discussion round have not run live yet. Other MASTER_SPEC §6.1
+  triggers are not detected automatically.
+- Reviews can pass while they still list "suspected" findings. Nobody triages those yet
+  (finding 18).
+- Protected-path deny rules for agents have not been verified against a live Claude Code
+  call. The core's Git check after each call is the enforcement either way.
+- A meeting decision can widen the scope of the tasks it steers (finding 21); this has not
+  been seen in a live run yet.
+- The dashboard serves one project, the one `dashboard` was started in, for one local
+  founder. Live updates use polling.

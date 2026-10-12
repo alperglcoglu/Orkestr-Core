@@ -35,6 +35,7 @@ class AgentRequest:
     model: str | None = None
     test_command_rules: list[str] = field(default_factory=list)  # permission rules for test commands
     task_id: str | None = None
+    denied_paths: list[str] = field(default_factory=list)  # protected paths (policy); a guardrail, the core's Git check enforces them
 
 
 @dataclass

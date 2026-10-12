@@ -22,9 +22,11 @@ from pydantic import ValidationError
 from ..agents import prompts
 from ..agents.definitions import AgentDefinition, load_agents
 from ..agents.schemas import OUTPUTS, schema_for
-from ..constants import AGENT_TIMEOUT_S, CORE_LIMITS, LOCK_FILE, REPORTS_DIR, TEST_TIMEOUT_S
+from ..constants import AGENT_ROLES, AGENT_TIMEOUT_S, CORE_LIMITS, DEFAULT_LIMITS, LOCK_FILE, REPORTS_DIR, TEST_TIMEOUT_S
+from ..domain import policy as pol
 from ..domain import records as rec
 from ..domain import state as st
+from ..domain import team as tm
 from ..domain.errors import OrkestrError, now
 from ..domain.redact import redact
 from ..domain.scope import file_in_scope
@@ -40,6 +42,8 @@ SECURITY_TRIGGER = re.compile(
     re.IGNORECASE,
 )
 APPROVAL_WAIT = "Waiting for approval "
+PROTECTED_CHECK = "orkestr protected path check"
+PATH_APPROVAL = "Change files under approval paths"
 
 
 class StopRun(Exception):
@@ -84,6 +88,10 @@ class Engine:
         self.cancel = CancelToken()
         self.run_id: int | None = None
         self._calls_lock = threading.Lock()
+        # Replaced by _load_settings when a run starts or continues.
+        self.team = tm.default_team()
+        self.policy = pol.empty_policy()
+        self.policy_version = 0
 
     # ------------------------------------------------------------------
     # Run lifecycle
@@ -98,6 +106,7 @@ class Engine:
             watcher.start()
             try:
                 try:
+                    self._load_settings()
                     self._loop(goal)
                     status, reason = self._final_status()
                 except StopRun as stop:
@@ -115,16 +124,23 @@ class Engine:
             self.log(f"Run {self.run_id} {status}{': ' + reason if reason else ''}")
             return self.store.query("SELECT * FROM workflow_run WHERE id = ?", (self.run_id,))[0]
 
-    def _open_run(self, goal: str | None) -> int:
-        # Any RUNNING run belongs to a process that is gone (we hold the lock now).
-        for r in self.store.query("SELECT id FROM workflow_run WHERE status = 'RUNNING'"):
+    def _close_interrupted(self):
+        """Any RUNNING run belongs to a process that is gone (we hold the lock now). Workflow
+        runs are continued; other kinds (a retro) are closed as failed."""
+        for r in self.store.query("SELECT id, kind FROM workflow_run WHERE status = 'RUNNING'"):
             self.store.execute(
                 "UPDATE workflow_step SET status = 'FAILED', error = 'interrupted', ended_at = ? WHERE run_id = ? AND status IN ('RUNNING', 'PENDING')",
                 (now(), r["id"]),
             )
-            self.log(f"Run {r['id']} was interrupted; continuing it.")
+            if r["kind"] == "run":
+                self.log(f"Run {r['id']} was interrupted; continuing it.")
+            else:
+                self.store.execute("UPDATE workflow_run SET status = 'FAILED', status_reason = 'interrupted', ended_at = ? WHERE id = ?", (now(), r["id"]))
+
+    def _open_run(self, goal: str | None) -> int:
+        self._close_interrupted()
         latest = self.store.query(
-            "SELECT * FROM workflow_run WHERE status IN ('RUNNING', 'PAUSED', 'WAITING_FOUNDER') ORDER BY id DESC LIMIT 1"
+            "SELECT * FROM workflow_run WHERE kind = 'run' AND status IN ('RUNNING', 'PAUSED', 'WAITING_FOUNDER') ORDER BY id DESC LIMIT 1"
         )
         options = {"model": self.model, "max_agent_calls": self.max_agent_calls_override}
         if latest and not goal:
@@ -143,6 +159,95 @@ class Engine:
             "INSERT INTO workflow_run (kind, goal, status, options_json, started_at) VALUES ('run', ?, 'RUNNING', ?, ?)",
             (redact(goal) if goal else None, json.dumps(options), now()),
         )
+
+    def _load_settings(self):
+        """Team and policy in force from now until this invocation ends (PHASE4_IMPLEMENTATION.md
+        §5.3, §6.4). Taken whenever a run starts or continues, never in the middle of a step, and
+        recorded on the run with a history event."""
+        self.team = self.store.team()
+        p = self.store.policy()
+        self.policy, self.policy_version = p["policy"], p["version"]
+        options = json.loads(self.store.query("SELECT options_json FROM workflow_run WHERE id = ?", (self.run_id,))[0]["options_json"] or "{}")
+        options["team"] = tm.differences(self.team)
+        self.store.execute("UPDATE workflow_run SET options_json = ?, policy_version = ? WHERE id = ?", (json.dumps(options), self.policy_version, self.run_id))
+        self.project.mutate(
+            lambda s: st.emit(s, "run.settings", entity=f"run {self.run_id}", summary=f"policy v{self.policy_version}, team changes: {', '.join(options['team']) or 'none'}", data={"policy_version": self.policy_version, "team": options["team"]}),
+            run_id=self.run_id,
+            export=False,
+        )
+        if self.policy_version >= 1:
+            self._apply_policy_limits()
+
+    def _apply_policy_limits(self):
+        """Policy limits replace the project limits; a limit left out of the policy is the
+        Phase 3 default again (PHASE4_IMPLEMENTATION.md §13)."""
+        state = self.store.load()
+        current = state.project["limits"]
+        wanted = {**current, **DEFAULT_LIMITS, **CORE_LIMITS, **(self.policy.get("limits") or {})}
+        if "max_reported_cost_usd_per_run" not in (self.policy.get("limits") or {}):
+            wanted.pop("max_reported_cost_usd_per_run", None)
+        if wanted == current:
+            return
+        conflicts = pol.limit_conflicts(state.tasks, wanted)
+        if conflicts:
+            raise StopRun("WAITING_FOUNDER", f"policy v{self.policy_version} limits conflict with existing tasks: {'; '.join(conflicts)}")
+
+        def apply(s):
+            s.project["limits"] = wanted
+            st.emit(s, "project.limits", entity="project", summary=f"Limits from policy v{self.policy_version}", data={"from": current, "to": wanted})
+
+        self.project.mutate(apply, run_id=self.run_id)
+
+    def retro(self, scope: str | None = None) -> dict:
+        """One bounded retrospective call over the project history (PHASE4_IMPLEMENTATION.md §4,
+        step 0.2). It is its own run (kind `retro`) and never continues or supersedes a workflow run.
+        It ends COMPLETED, FAILED, or CANCELLED, so `run` never resumes it."""
+        with RunLock(self.project.dir / LOCK_FILE):
+            self.cancel = CancelToken()
+            self._sync_agent_definitions()
+            self._close_interrupted()
+            options = {"model": self.model, "max_agent_calls": self.max_agent_calls_override}
+            self.run_id = self.store.execute(
+                "INSERT INTO workflow_run (kind, goal, status, options_json, started_at) VALUES ('retro', ?, 'RUNNING', ?, ?)",
+                (redact(scope) if scope else None, json.dumps(options), now()),
+            )
+            watcher = threading.Thread(target=self._watch_control, daemon=True)
+            watcher.start()
+            retro_id = None
+            try:
+                try:
+                    self._load_settings()
+                    retro_id = self._retro(scope)
+                    status, reason = "COMPLETED", None
+                except StopRun as stop:
+                    status = "CANCELLED" if stop.status == "CANCELLED" else "FAILED"
+                    reason = stop.reason
+                except OrkestrError as err:
+                    status, reason = "FAILED", err.message
+                except Exception as err:  # noqa: BLE001 - recorded on the run, then re-raised
+                    self._close_run("FAILED", f"unexpected error: {err}", None)
+                    raise
+            finally:
+                self.cancel.cancel()
+            self._close_run(status, reason, None)
+            self.log(f"Retro run {self.run_id} {status}{': ' + reason if reason else ''}")
+            return {**self.store.query("SELECT * FROM workflow_run WHERE id = ?", (self.run_id,))[0], "retro_id": retro_id}
+
+    def _retro(self, scope: str | None) -> str:
+        state = self.store.load()
+        scope = scope or f"{state.project['name']}: {state.project['goal']}"
+        with self.step("retro", input_data={"scope": scope}) as s:
+            self._reserve_calls([None])
+            summary = retro_summary(state, self.store.history(), self.project.usage())
+            req = self._request("retro", "tech-lead", prompts.retro_prompt(f"Scope: {scope}\n\n{summary}"), "read_only", None)
+            out = self._execute(s["id"], req)
+            if out.output is None:
+                raise StopRun("FAILED", f"retrospective failed: {out.error}")
+            draft = {**out.output, "scope": out.output.get("scope") or scope}
+            retro = self.project.mutate(lambda s_: rec.record_retro(s_, draft), run_id=self.run_id)
+            s["result"] = {"retro_id": retro["id"]}
+            self.log(f"Recorded {retro['id']} with {len(retro['lessons'])} lesson(s)")
+            return retro["id"]
 
     def _close_run(self, status: str, reason: str | None, report: str | None):
         self.store.execute(
@@ -242,21 +347,29 @@ class Engine:
 
     def _request(self, kind: str, role: str, prompt: str, profile: str, task: dict | None) -> AgentRequest:
         agent = self.agents[role]
+        row = self.team.get(role) or tm.default_role(role)
         return AgentRequest(
             role=role,
             kind=kind,
             prompt=prompt,
-            system_prompt=agent.prompt,
+            system_prompt=tm.system_prompt(agent.prompt, row),
             cwd=str(self.root),
             tools=profile,  # type: ignore[arg-type]
             output_schema=schema_for(kind),
             scope=list(task.get("scope") or []) if task else [],
-            max_turns=agent.max_turns,
+            max_turns=tm.effective_max_turns(row, agent.max_turns),
             timeout_s=self.agent_timeout_s,
-            model=self.model,
-            test_command_rules=vf.permission_rules(),
+            model=tm.effective_model(row, self.model),
+            test_command_rules=vf.permission_rules(self._test_commands()),
             task_id=task["id"] if task else None,
+            denied_paths=list(self.policy.get("protected_paths") or []),
         )
+
+    def _test_commands(self) -> list[str]:
+        return list(self.policy.get("test_commands") or [])
+
+    def _enabled(self, role: str) -> bool:
+        return (self.team.get(role) or tm.default_role(role))["enabled"]
 
     def _record_execution(self, step_id: int, req: AgentRequest, result: AgentResult, started: str, duration_ms: int) -> int:
         with self._calls_lock:
@@ -344,6 +457,9 @@ class Engine:
                 self._plan(goal)
                 planned = True
                 continue
+            if self._plan_decisions(state):
+                continue
+            self._check_team(state)
 
             pending_verify = self._pending_verify(state)
             if pending_verify:
@@ -360,6 +476,8 @@ class Engine:
             recovery = [t for t in state.tasks if self._needs_recovery(state, t)]
             if recovery:
                 self._recovery_meeting(recovery[0])
+                continue
+            if self._request_path_approvals(state):
                 continue
             wave = [t for t in st.parallel_candidates(state) if t["owner"] != "founder"]
             if wave:
@@ -396,14 +514,21 @@ class Engine:
         role = "product-manager"
         with self.step("plan", input_data={"goal": goal}) as s:
             self._reserve_calls([None])
-            req = self._request("plan", role, prompts.plan_prompt(project, prd.exists(), vf.TEST_COMMAND_FORMS), "read_only", None)
+            owners = [r for r in tm.enabled_roles(self.team) if r in self.agents]
+            prompt = prompts.plan_prompt(project, prd.exists(), vf.command_forms(self._test_commands()), owners, self.policy.get("protected_paths"))
+            req = self._request("plan", role, prompt, "read_only", None)
             out = self._execute(s["id"], req)
             if out.output is None:
                 raise StopRun("WAITING_FOUNDER", f"planning failed: {out.error}")
             problems = self._plan_problems(out.output)
             if problems:
                 self._reserve_calls([None])
-                req.prompt += "\n\nYour plan was rejected:\n- " + "\n- ".join(problems) + "\nReturn a corrected plan."
+                req.prompt += (
+                    "\n\nYour plan was rejected:\n- "
+                    + "\n- ".join(problems)
+                    + "\nFix only these problems and keep everything else in your plan as it was, including decisions_needed."
+                    + " Return the corrected plan."
+                )
                 out = self._execute(s["id"], req)
                 problems = self._plan_problems(out.output) if out.output else [out.error or "no output"]
                 if problems:
@@ -413,8 +538,20 @@ class Engine:
                 write_atomic(prd, plan["prd_markdown"].rstrip() + "\n")
                 self.store.record_artifact("requirements/prd.md", "prd", prd.read_text(encoding="utf-8"), role)
             tasks = self.project.mutate(lambda s_: st.import_plan(s_, {"summary": plan["summary"], "tasks": plan["tasks"]}), run_id=self.run_id)
-            s["result"] = {"task_ids": [t["id"] for t in tasks]}
+            decisions = [
+                {
+                    "key": f"plan-{s['id']}-{i + 1}",
+                    "question": d["question"],
+                    "options": d["options"],
+                    "context": d.get("context") or "",
+                    "task_ids": [tasks[int(ref[1:]) - 1]["id"] for ref in dict.fromkeys(d["blocks"])],
+                }
+                for i, d in enumerate(plan.get("decisions_needed") or [])
+            ]
+            s["result"] = {"task_ids": [t["id"] for t in tasks], "decisions": decisions}
             self.log(f"Planned {len(tasks)} task(s): {', '.join(t['id'] for t in tasks)}")
+            for d in decisions:
+                self.log(f"Open design choice before {', '.join(d['task_ids'])}: {d['question']}")
 
     def _plan_problems(self, plan: dict) -> list[str]:
         problems = []
@@ -425,14 +562,44 @@ class Engine:
             problems.append("at least one task needs a file scope")
         for i, t in enumerate(tasks):
             for c in t.get("verify") or []:
-                p = vf.command_problem(c)
+                p = vf.command_problem(c, self._test_commands())
                 if p:
                     problems.append(f"task #{i + 1} verify command {c!r}: {p}")
+            for path in self._verify_paths_outside(t, tasks):
+                problems.append(f"task #{i + 1} verify command needs {path}, which does not exist and is outside the scope of the task and of the tasks it depends on; put it in the scope")
+            if t.get("owner") in AGENT_ROLES and not self._enabled(t["owner"]):
+                problems.append(f"task #{i + 1} owner {t['owner']} is not in this project's team (enabled: {', '.join(tm.enabled_roles(self.team))})")
+            hit = pol.protected_overlap(t["scope"], self.policy) if t.get("scope") else []
+            if hit and t.get("owner") != "founder":
+                problems.append(f"task #{i + 1} scope may touch protected paths {', '.join(hit)}; narrow the scope")
+        for i, d in enumerate(plan.get("decisions_needed") or []):
+            for ref in d.get("blocks") or []:
+                if not re.fullmatch(r"#[1-9]\d*", ref) or int(ref[1:]) > len(tasks):
+                    problems.append(f"decisions_needed[{i + 1}] blocks {ref!r}: use \"#n\" for a task of this plan (1–{len(tasks)})")
         try:
             st.create_tasks(self.store.load(), tasks, {"type": "plan", "ref": None})  # a throwaway copy
         except OrkestrError as err:
             problems.append(err.message)
         return problems
+
+    def _verify_paths_outside(self, task: dict, plan_tasks: list[dict]) -> list[str]:
+        """Files a verify command names that nobody may create: they do not exist and are outside
+        the scope of the task and of the plan tasks it depends on (phase2/FINDINGS.md #20)."""
+        scopes = list(task.get("scope") or [])
+        for ref in task.get("depends_on") or []:
+            if re.fullmatch(r"#[1-9]\d*", ref) and int(ref[1:]) <= len(plan_tasks):
+                scopes += plan_tasks[int(ref[1:]) - 1].get("scope") or []
+        if not task.get("scope"):
+            return []  # an unscoped task may create anything
+        out = []
+        for c in task.get("verify") or []:
+            for word in c.split()[1:]:
+                if word.startswith("-") or not re.search(r"\.[A-Za-z0-9]{1,5}$", word):
+                    continue  # flags and directories are not checked
+                path = word.replace("\\", "/").removeprefix("./")
+                if not (self.root / path).exists() and not file_in_scope(path, scopes):
+                    out.append(path)
+        return list(dict.fromkeys(out))
 
     # ------------------------------------------------------------------
     # Implementation waves
@@ -457,7 +624,7 @@ class Engine:
         requests: dict[str, AgentRequest] = {}
         for t in tasks:
             fix = self._fix_context(state, t)
-            prompt = prompts.implement_prompt(t, fix, resumed[t["id"]] is not None, vf.TEST_COMMAND_FORMS)
+            prompt = prompts.implement_prompt(t, fix, resumed[t["id"]] is not None, vf.command_forms(self._test_commands()))
             role = t["owner"] if t["owner"] in self.agents else "tech-lead"  # orchestrator-owned work goes to the tech lead
             requests[t["id"]] = self._request("implement", role, prompt, "implement", t)
 
@@ -572,6 +739,12 @@ class Engine:
                     notes.append(f"Reported as changed but not changed on disk: {', '.join(missing)}")
                 if notes:
                     self.project.mutate(lambda s_: st.add_note(s_, tid, author=task["owner"], text=" | ".join(notes)[:4000]), run_id=self.run_id)
+                protected = pol.protected_files(files, self.policy)
+                if protected:
+                    self._evidence(tid, "check", "failed", PROTECTED_CHECK, f"Protected files changed (policy v{self.policy_version}): {', '.join(protected)}; revert them")
+                    self.log(f"{tid}: protected files changed {', '.join(protected)}")
+                    s["result"] = {"protected": protected}
+                    continue
                 if files:
                     r = self.project.mutate(lambda s_: st.scope_check(s_, files, tid), run_id=self.run_id)
                     if r["violations"]:
@@ -579,17 +752,18 @@ class Engine:
                         s["result"] = {"scope_violations": [v["file"] for v in r["violations"]]}
                         continue
                 commands = list(dict.fromkeys([*(task.get("verify") or []), *(output.get("test_commands") or [])]))
-                runnable = [c for c in commands if not vf.command_problem(c)]
-                rejected = [f"`{c}`: {vf.command_problem(c)}" for c in commands if vf.command_problem(c)]
+                extra = self._test_commands()
+                runnable = [c for c in commands if not vf.command_problem(c, extra)]
+                rejected = [f"`{c}`: {vf.command_problem(c, extra)}" for c in commands if vf.command_problem(c, extra)]
                 if rejected:
                     self.project.mutate(lambda s_: st.add_note(s_, tid, author="orchestrator", text="Not run: " + "; ".join(rejected)), run_id=self.run_id)
                 if not runnable:
-                    self._evidence(tid, "check", "failed", "verification", "No runnable verification command was given (allowed forms: " + ", ".join(vf.TEST_COMMAND_FORMS) + ")")
+                    self._evidence(tid, "check", "failed", "verification", "No runnable verification command was given (allowed forms: " + ", ".join(vf.command_forms(extra)) + ")")
                     s["result"] = {"commands": []}
                     continue
                 ran = []
                 for c in runnable:
-                    res = vf.run_test_command(self.root, c, self.test_timeout_s, self.cancel)
+                    res = vf.run_test_command(self.root, c, self.test_timeout_s, self.cancel, extra)
                     trid = self.store.record_test_result(tid, c, res.exit_code, res.duration_ms, res.timed_out, res.output_tail, "core")
                     summary = (
                         f"exit {res.exit_code} in {res.duration_ms} ms"
@@ -628,7 +802,7 @@ class Engine:
             return
         reviewers = ["qa-engineer" if task["owner"] != "qa-engineer" else "tech-lead"]
         text = " ".join([task["title"], task.get("description") or "", *(task.get("scope") or [])])
-        if SECURITY_TRIGGER.search(text) and task["owner"] != "security-reviewer":
+        if (SECURITY_TRIGGER.search(text) or pol.security_review(task.get("scope"), self.policy)) and task["owner"] != "security-reviewer":
             reviewers.append("security-reviewer")
         checks = []
         for e in task["evidence"][last_review + 1 :]:
@@ -703,20 +877,23 @@ class Engine:
         )
 
     def _participants(self, owner: str) -> list[dict]:
-        lead = "tech-lead" if owner != "tech-lead" else "system-architect"
-        owner = owner if owner in self.agents else "backend-engineer"
+        """The implementer's seat and a lead, both from the enabled team. A disabled or non-agent
+        owner's seat goes to the tech lead (PHASE4_IMPLEMENTATION.md §5.2)."""
+        if owner not in self.agents or not self._enabled(owner):
+            owner = "backend-engineer" if owner not in AGENT_ROLES and self._enabled("backend-engineer") else "tech-lead"
+        lead = "tech-lead" if owner != "tech-lead" else ("system-architect" if self._enabled("system-architect") else "qa-engineer")
         return [
             {"role": owner, "responsibility": "the implementer of the task"},
             {"role": lead, "responsibility": "technical direction and trade-offs"},
         ]
 
-    def _meeting(self, meeting: dict, task_ids: list[str], recovery_for: str | None) -> dict:
+    def _meeting(self, meeting: dict, task_ids: list[str], recovery_for: str | None, key: str | None = None) -> dict:
         """Runs rounds and the synthesis, then records the meeting. Returns the record result."""
         limits = self.store.load().project["limits"]
         participants = meeting["participants"]
         contributions: list[dict] = []
-        task = st.get_task(self.store.load(), task_ids[0]) if task_ids else None
-        with self.step("meeting", task_id=task_ids[0] if task_ids else None, input_data={"objective": meeting["objective"]}) as s:
+        input_data = {"objective": meeting["objective"], **({"key": key} if key else {})}
+        with self.step("meeting", task_id=task_ids[0] if task_ids else None, input_data=input_data) as s:
             rounds = []
             for round_no in range(1, limits["max_discussion_rounds"] + 1):
                 self._check_control()
@@ -777,6 +954,7 @@ class Engine:
                 elif task_ids:
                     draft["applies_to"] = task_ids
                 try:
+                    self._check_action_items(draft["action_items"], (draft.get("decision") or {}).get("scope_changes") or [])
                     result = self.project.mutate(lambda s_: rec.record_meeting(s_, draft), run_id=self.run_id)
                     break
                 except OrkestrError as err:
@@ -814,6 +992,41 @@ class Engine:
         }
         self._meeting(meeting, [tid], recovery_for=None)
 
+    def _plan_decisions(self, state: st.State) -> bool:
+        """Design choices the plan left open are settled in a meeting before the tasks they block
+        start. Each one is held once per run (found again by its key after a restart). A decision
+        that waits for the founder stops the run; no decision or a rejected one lets the tasks go
+        ahead, and an implementer can still raise the choice again with decision_needed."""
+        rows = self.store.query("SELECT result_json FROM workflow_step WHERE run_id = ? AND kind = 'plan' AND status = 'DONE' ORDER BY id", (self.run_id,))
+        held = {}
+        for m in self.store.query("SELECT input_json, result_json FROM workflow_step WHERE run_id = ? AND kind = 'meeting' AND status = 'DONE'", (self.run_id,)):
+            key = json.loads(m["input_json"] or "{}").get("key")
+            if key:
+                held[key] = json.loads(m["result_json"] or "{}")
+        for row in rows:
+            for need in json.loads(row["result_json"] or "{}").get("decisions") or []:
+                open_ids = [tid for tid in need["task_ids"] if (t := st.find_task(state, tid)) and t["status"] not in st.TERMINAL]
+                if not open_ids:
+                    continue
+                if need["key"] not in held:
+                    self._plan_decision_meeting(need, open_ids, state)
+                    return True
+                d = state.decisions.get(held[need["key"]].get("decision") or "")
+                if d and d["approval_status"] in ("PROPOSED", "NEEDS_FOUNDER"):
+                    raise StopRun("WAITING_FOUNDER", f"decide {d['id']}: {d['question']}")
+        return False
+
+    def _plan_decision_meeting(self, need: dict, task_ids: list[str], state: st.State):
+        owner = st.get_task(state, task_ids[0])["owner"]
+        meeting = {
+            "objective": need["question"],
+            "context": (need["context"] + " " if need["context"] else "") + f"The plan left this open; {', '.join(task_ids)} wait for it.",
+            "trigger": "A design choice the plan left open blocks tasks (MASTER_SPEC §6.1)",
+            "participants": self._participants(owner),
+            "options": [{"id": f"O{i + 1}", "name": o, "summary": ""} for i, o in enumerate(need["options"])],
+        }
+        self._meeting(meeting, task_ids, recovery_for=None, key=need["key"])
+
     # ------------------------------------------------------------------
     # Approvals
 
@@ -825,6 +1038,45 @@ class Engine:
 
         a = self.project.mutate(apply, run_id=self.run_id)
         self.log(f"{tid}: needs founder approval {a['id']} ({a['action']})")
+
+    def _check_action_items(self, items: list[dict], scope_changes: list[dict] | None = None):
+        """Meeting action items and scope changes follow the same team and policy rules as plan tasks."""
+        problems = [
+            f"decision.scope_changes for {c.get('task_id')} may touch protected paths {', '.join(hit)}"
+            for c in scope_changes or []
+            if (hit := pol.protected_overlap(c.get("add") or [], self.policy))
+        ]
+        for i, a in enumerate(items):
+            if a.get("owner") in AGENT_ROLES and not self._enabled(a["owner"]):
+                problems.append(f"action item {i + 1} owner {a['owner']} is not in this project's team")
+            hit = pol.protected_overlap(a["scope"], self.policy) if a.get("scope") else []
+            if hit and a.get("owner") != "founder":
+                problems.append(f"action item {i + 1} scope may touch protected paths {', '.join(hit)}")
+        if problems:
+            raise OrkestrError("; ".join(problems))
+
+    def _check_team(self, state: st.State):
+        """Open tasks owned by a disabled role are not reassigned silently (§5.2)."""
+        orphans = [t for t in state.tasks if t["status"] not in st.TERMINAL and t["owner"] in AGENT_ROLES and not self._enabled(t["owner"])]
+        if orphans:
+            names = ", ".join(f"{t['id']} ({t['owner']})" for t in orphans)
+            raise StopRun("WAITING_FOUNDER", f"tasks owned by roles that are disabled in the team: {names}; re-enable the role or change the tasks")
+
+    def _request_path_approvals(self, state: st.State) -> bool:
+        """READY tasks whose scope touches the policy's approval paths ask the founder first (§6.2)."""
+        asked = False
+        for t in state.tasks:
+            if t["status"] != "READY" or t["owner"] == "founder" or not pol.needs_approval(t.get("scope"), self.policy):
+                continue
+            if any(a.get("task_id") == t["id"] and a["action"].startswith(PATH_APPROVAL) for a in state.approvals):
+                continue  # already asked; a granted one lets the task start, a rejected one keeps it blocked
+            paths = ", ".join(self.policy["approval_paths"])
+            self._request_approval(
+                t["id"],
+                {"action": f"{PATH_APPROVAL} ({paths}) for {t['id']}: {t['title']}", "category": "other", "reason": f"Policy v{self.policy_version} requires founder approval for changes under {paths}"},
+            )
+            asked = True
+        return asked
 
     def _unblock_approved(self, state: st.State) -> bool:
         ready = []
@@ -858,6 +1110,40 @@ class Engine:
         write_atomic(self.project.dir / rel, text)
         self.store.record_artifact(rel, "report", text, "orchestrator")
         return rel
+
+
+RETRO_HISTORY_EVENTS = 80
+RETRO_SUMMARY_CHARS = 24_000
+
+
+def retro_summary(state: st.State, history: list[dict], usage: dict) -> str:
+    """The evidence a retrospective works from: records and recent history, never file contents."""
+    p = state.project
+    lines = [f"Project: {p['name']} — status {p['status']}", f"Goal: {p['goal']}", "", "Tasks:"]
+    for t in state.tasks:
+        lines.append(f"- {t['id']} [{t['status']}] {t['title']} (owner {t['owner']}, fix attempts {t['fix_attempts']}, recovery meetings {t.get('recovery_meetings', 0)})")
+        for e in t["evidence"]:
+            lines.append(f"  - evidence {e['type']}/{e['result']}: {e.get('command') or ''} — {e['summary']}"[:400])
+        if t.get("failure"):
+            lines.append(f"  - failure: {(t['failure'] or {}).get('error')}"[:400])
+    sections = {
+        "Reviews": [f"- {r['id']} on {r.get('task_id')}: {r.get('verdict')} ({len(r.get('findings') or [])} finding(s))" for r in state.reviews.values()],
+        "Meetings": [f"- {m['id']} ({m.get('trigger')}): {m.get('objective')} → {m.get('outcome')}" for m in state.meetings.values()],
+        "Decisions": [f"- {d['id']} [{d['approval_status']}] {d['question']}" for d in state.decisions.values()],
+        "Assumptions": [f"- [{a.get('impact')}] {a['text']}" for a in p.get("assumptions") or []],
+    }
+    for title, items in sections.items():
+        lines += ["", f"{title}:", *(items or ["- (none)"])]
+    lines += [
+        "",
+        f"Agent usage: {usage['calls']} call(s), {usage['failed']} failed, {usage['num_turns']} turn(s), "
+        f"{usage['input_tokens']} input and {usage['output_tokens']} output token(s)",
+        "",
+        f"History (last {RETRO_HISTORY_EVENTS} events):",
+    ]
+    lines += [f"- {h['ts']} {h['type']} {h.get('entity') or ''} {h.get('summary') or ''}"[:300] for h in history[-RETRO_HISTORY_EVENTS:]]
+    text = "\n".join(lines)
+    return text if len(text) <= RETRO_SUMMARY_CHARS else text[:RETRO_SUMMARY_CHARS] + "\n(truncated)"
 
 
 def request_control(project: Project, action: str, reason: str | None = None) -> str:

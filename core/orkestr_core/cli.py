@@ -64,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("--model", default=None)
         s.add_argument("--max-agent-calls", type=int, default=None)
 
+    s = sub.add_parser("retro", help="run one retrospective agent call over the project history")
+    s.add_argument("--scope", default=None, help="what the retrospective covers (default: the project goal)")
+    s.add_argument("--executor", default="claude", choices=["claude"])
+    s.add_argument("--model", default=None)
+    s.add_argument("--max-agent-calls", type=int, default=None)
+
     s = sub.add_parser("pause", help="pause after the current step")
     s.add_argument("--reason", default=None)
     s = sub.add_parser("cancel", help="cancel the open run (or, with --project-cancel, the whole project)")
@@ -87,8 +93,35 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("approval")
     s.add_argument("--result", required=True)
 
+    s = sub.add_parser("team", help="show or change the agent team (applies when a run starts or continues)")
+    team_sub = s.add_subparsers(dest="team_cmd", required=True)
+    team_sub.add_parser("show", help="each role with its settings")
+    t = team_sub.add_parser("set", help="change one role (founder)")
+    t.add_argument("role")
+    on_off = t.add_mutually_exclusive_group()
+    on_off.add_argument("--enable", dest="enabled", action="store_true", default=None)
+    on_off.add_argument("--disable", dest="enabled", action="store_false")
+    t.add_argument("--model", default=None, help='model alias or name; "" clears it')
+    t.add_argument("--max-turns", type=int, default=None, help="lower turn limit; 0 clears it")
+    t.add_argument("--instructions-file", default=None, help="extra instructions for this role (UTF-8 text); an empty file clears them")
+
+    s = sub.add_parser("policy", help="show or change the permission policy (applies when a run starts or continues)")
+    policy_sub = s.add_subparsers(dest="policy_cmd", required=True)
+    policy_sub.add_parser("show", help="the current policy as JSON")
+    policy_sub.add_parser("history", help="every policy version")
+    t = policy_sub.add_parser("set", help="save a new policy version from a JSON file (founder)")
+    t.add_argument("file")
+    t.add_argument("--reason", required=True)
+
+    s = sub.add_parser("autonomy", help="change the autonomy mode (founder)")
+    s.add_argument("mode", choices=["bounded", "supervised"])
+    s.add_argument("--reason", required=True)
+
     s = sub.add_parser("serve", help="start the local HTTP API on 127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
+    s = sub.add_parser("dashboard", help="start the local API and open the founder dashboard in the browser")
+    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--no-open", action="store_true", help="print the dashboard address instead of opening a browser")
     return p
 
 
@@ -131,6 +164,13 @@ def _dispatch(project: Project, args) -> int:
         run = _engine(project, args).run(getattr(args, "goal", None))
         print(project.report_text(run_id=run["id"]))
         return 0 if run["status"] in ("COMPLETED", "WAITING_FOUNDER", "PAUSED") else 1
+    if cmd == "retro":
+        run = _engine(project, args).retro(args.scope)
+        if run["retro_id"]:
+            print((project.dir / "retros" / f"{run['retro_id']}.md").read_text(encoding="utf-8"))
+            return 0
+        print(f"orkestr-core: retrospective {run['status']}: {run['status_reason']}", file=sys.stderr)
+        return 1
     if cmd == "pause":
         from .workflow.engine import request_control
 
@@ -176,10 +216,59 @@ def _dispatch(project: Project, args) -> int:
         project.record_approval_result(args.approval, args.result)
         print(f"Recorded the result for {args.approval}.")
         return 0
+    if cmd == "team":
+        if args.team_cmd == "set":
+            change: dict = {}
+            if args.enabled is not None:
+                change["enabled"] = args.enabled
+            if args.model is not None:
+                change["model"] = args.model
+            if args.max_turns is not None:
+                change["max_turns"] = args.max_turns or None
+            if args.instructions_file is not None:
+                change["instructions"] = Path(args.instructions_file).read_text(encoding="utf-8")
+            if not change:
+                raise OrkestrError("Nothing to change; pass --enable/--disable, --model, --max-turns, or --instructions-file.", "E_USAGE")
+            project.set_team_role(args.role, change)
+            print(f"Updated {args.role}; the change applies when a run starts or continues.")
+        for role, r in project.team().items():
+            extras = [f"model {r['model']}" if r["model"] else "", f"max turns {r['max_turns']}" if r["max_turns"] else "", "instructions" if r["instructions"] else ""]
+            print(f"{'on ' if r['enabled'] else 'off'} {role}{'  (' + ', '.join(x for x in extras if x) + ')' if any(extras) else ''}")
+        return 0
+    if cmd == "policy":
+        import json
+
+        if args.policy_cmd == "set":
+            try:
+                policy = json.loads(Path(args.file).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as err:
+                raise OrkestrError(f"Could not read the policy file: {err}", "E_USAGE") from None
+            version = project.set_policy(policy, args.reason)
+            print(f"Saved policy version {version}; it applies when a run starts or continues.")
+            return 0
+        if args.policy_cmd == "history":
+            for v in project.store.policy_versions():
+                print(f"v{v['version']}  {v['created_at']}  {v['created_by']}: {v['reason']}")
+            return 0
+        p = project.policy()
+        print(f"Policy version {p['version']} ({p['reason']})")
+        print(json.dumps(p["policy"], indent=2))
+        return 0
+    if cmd == "autonomy":
+        project.set_autonomy(args.mode, args.reason)
+        print(f"Autonomy is now {args.mode}.")
+        return 0
     if cmd == "serve":
         from .api.app import serve
 
         serve(project, port=args.port)
+        return 0
+    if cmd == "dashboard":
+        from .api.app import dashboard_url, serve
+
+        if args.no_open:
+            print(f"Open {dashboard_url(project, args.port)} (the address contains your API token; do not share it).")
+        serve(project, port=args.port, open_dashboard=not args.no_open)
         return 0
     raise OrkestrError(f"Unknown command: {cmd}", "E_USAGE")
 

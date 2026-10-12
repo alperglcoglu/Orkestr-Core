@@ -31,7 +31,10 @@ def _task_block(task: dict) -> str:
     return "\n".join(lines)
 
 
-def plan_prompt(project: dict, prd_exists: bool, allowed_tests: list[str]) -> str:
+def plan_prompt(project: dict, prd_exists: bool, allowed_tests: list[str], owners: list[str] | None = None, protected: list[str] | None = None) -> str:
+    team = f"\n  Owner roles in this project's team: {', '.join(owners)} (and founder)." if owners else ""
+    if protected:
+        team += f"\n  Protected paths no task may change (keep them out of every scope): {', '.join(protected)}."
     return f"""{COMMON}
 Step: PLAN.
 Goal from the founder: {project['goal']}
@@ -45,7 +48,12 @@ Read the repository to understand what exists. Then return:
   testable acceptance criteria, a file scope (path patterns such as "src/**"), and at least one
   exact verification command. Allowed test command forms: {', '.join(allowed_tests)}.
   Use depends_on with "#n" for the n-th task in your list. Tasks with disjoint scopes can run
-  in parallel. Set requires_approval only for restricted actions.
+  in parallel. Set requires_approval only for restricted actions.{team}
+- decisions_needed: design choices the goal leaves open and the team must settle before some
+  tasks start (question, at least two options, and "#n" for each task that must wait). The
+  team holds a meeting on each one; product, budget, legal, or security-policy matters still
+  go to the founder from there. Do not create founder-owned tasks for such choices. A task is
+  owned by "founder" only when nobody else can do it (credentials, accounts, purchases, legal).
 """
 
 
@@ -60,7 +68,9 @@ Step: IMPLEMENT one task.
 {_task_block(task)}
 {extra}
 Make the smallest correct change inside the scope, with tests. Edit existing files; never
-replace a file's whole content when a focused edit works. You may run the project's tests.
+replace a file's whole content when a focused edit works. Create and change files with the
+Write and Edit tools. Bash is allowed only for the test command forms ({', '.join(allowed_tests)}),
+one command at a time, without `cd`, pipes, or `&&`; run them to check your work.
 Return:
 - summary: what you changed and why;
 - changed_files: every file you created or modified;
@@ -134,6 +144,9 @@ Use outcome DECIDED with decision.selected_option when the evidence supports one
 ESCALATED (selected_option null) when the founder must choose; NO_DECISION otherwise. Set
 decision.founder_required for product, budget, legal, or security-policy matters. Record
 material dissent, even when the participants chose the same option for different reasons.
+If the decision means one of the tasks above must change files outside its current scope,
+list them in decision.scope_changes (task_id and the path patterns to add). Scopes are only
+ever widened this way, and only when the decision is approved.
 """
 
 

@@ -7,6 +7,7 @@ Orkestr is an open-source Claude Code plugin that runs your software project lik
 - Phase 1 implementation plan: [PHASE1_IMPLEMENTATION.md](PHASE1_IMPLEMENTATION.md)
 - Phase 2 real-project validation kit: [phase2/README.md](phase2/README.md)
 - Phase 3 standalone core: [PHASE3_IMPLEMENTATION.md](PHASE3_IMPLEMENTATION.md) and [core/README.md](core/README.md)
+- Phase 4 dashboard, agent teams, and permission policies: [PHASE4_IMPLEMENTATION.md](PHASE4_IMPLEMENTATION.md) and [core/README.md](core/README.md#dashboard)
 
 ## Quick install
 
