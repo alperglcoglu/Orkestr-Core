@@ -10,9 +10,9 @@ The binding scopes are [`PHASE3_IMPLEMENTATION.md`](../PHASE3_IMPLEMENTATION.md)
 [`PHASE4_IMPLEMENTATION.md`](../PHASE4_IMPLEMENTATION.md).
 
 > **Status:** Phase 3 implemented and validated live (`phase2/FINDINGS.md`, runs 3 and 4).
-> Phase 4 implemented and tested with a scripted executor (257 Python and 18 dashboard tests).
-> The dashboard was checked in a real browser with a fixture project. Teams and policies
-> have not been used in a live run yet.
+> Phase 4 implemented, tested with a scripted executor (259 Python and 18 dashboard tests),
+> checked in a real browser, and used live once: a dashboard-started run with a team
+> override and a protected path (`phase2/FINDINGS.md`, run 5).
 
 ## How it differs from the plugin
 
@@ -230,6 +230,7 @@ expand globs in `node --test`, so pass the directory.
   (finding 18).
 - Protected-path deny rules for agents have not been verified against a live Claude Code
   call. The core's Git check after each call is the enforcement either way.
-- Teams and policies have been tested only with the scripted executor.
+- A meeting decision cannot change a task's scope yet (finding 21), so a scope mistake in
+  the plan can loop until the per-task call limit stops the run.
 - The dashboard serves one project, the one `dashboard` was started in, for one local
   founder. Live updates use polling.
