@@ -1,5 +1,28 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Orkestr</title><link rel="stylesheet" href="/ui/app.css"></head>
-<body><script type="module" src="/ui/app.js"></script></body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Orkestr dashboard</title>
+  <link rel="stylesheet" href="/ui/app.css">
+  <link rel="icon" href="data:,">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Orkestr</span>
+      <span class="project-name" id="project-name"></span>
+    </div>
+    <div class="topbar-status" id="topbar-status" aria-live="polite"></div>
+  </header>
+  <nav class="tabs" id="tabs" aria-label="Dashboard views"></nav>
+  <main id="main" tabindex="-1">
+    <p class="muted loading">Loading…</p>
+  </main>
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <script type="module" src="/ui/app.js"></script>
+</body>
 </html>

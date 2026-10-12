@@ -245,6 +245,11 @@ class PolicyVersion(BaseModel):
     created_by: str
 
 
+class PolicyInfo(PolicyVersion):
+    hard_caps: dict[str, int | None]
+    default_test_commands: list[str]
+
+
 class PolicyBody(BaseModel):
     policy: dict[str, Any]
     reason: str
@@ -445,9 +450,12 @@ def create_app(project: Project, engine_factory: Callable[[RunBody], Any] | None
     def team():
         return team_rows()
 
-    @app.get("/policy", response_model=PolicyVersion, dependencies=deps)
+    @app.get("/policy", response_model=PolicyInfo, dependencies=deps)
     def policy():
-        return project.policy()
+        from ..domain.policy import HARD_CAPS
+        from ..workflow.verify import TEST_COMMAND_FORMS
+
+        return {**project.policy(), "hard_caps": HARD_CAPS, "default_test_commands": TEST_COMMAND_FORMS}
 
     @app.get("/policy/versions", response_model=list[PolicyVersion], dependencies=deps)
     def policy_versions():

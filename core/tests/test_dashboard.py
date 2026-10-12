@@ -159,9 +159,11 @@ def test_the_dashboard_files_exist():
 
 @pytest.mark.parametrize("path", UI_FILES, ids=lambda f: f.name)
 def test_no_external_resources(path):
-    text = path.read_text(encoding="utf-8")
-    assert not re.search(r"https?://", text), "the dashboard loads nothing from the network"
-    assert "@import" not in text and "url(" not in text.replace("url(data:", "")
+    # The SVG namespace is an identifier, not a resource; nothing else may look like a URL.
+    text = path.read_text(encoding="utf-8").replace("'http://www.w3.org/2000/svg'", "")
+    assert not re.search(r"https?://|//[a-z0-9-]+\.[a-z]{2,}/", text, re.IGNORECASE), "the dashboard loads nothing from the network"
+    assert "@import" not in text
+    assert not re.search(r"url\((?!#|data:)", text), "url() may only point inside the page"
 
 
 @pytest.mark.parametrize("path", [f for f in UI_FILES if f.suffix in (".js", ".html")], ids=lambda f: f.name)
