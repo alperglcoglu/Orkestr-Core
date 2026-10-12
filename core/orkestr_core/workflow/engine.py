@@ -22,9 +22,11 @@ from pydantic import ValidationError
 from ..agents import prompts
 from ..agents.definitions import AgentDefinition, load_agents
 from ..agents.schemas import OUTPUTS, schema_for
-from ..constants import AGENT_TIMEOUT_S, CORE_LIMITS, LOCK_FILE, REPORTS_DIR, TEST_TIMEOUT_S
+from ..constants import AGENT_ROLES, AGENT_TIMEOUT_S, CORE_LIMITS, DEFAULT_LIMITS, LOCK_FILE, REPORTS_DIR, TEST_TIMEOUT_S
+from ..domain import policy as pol
 from ..domain import records as rec
 from ..domain import state as st
+from ..domain import team as tm
 from ..domain.errors import OrkestrError, now
 from ..domain.redact import redact
 from ..domain.scope import file_in_scope
@@ -40,6 +42,8 @@ SECURITY_TRIGGER = re.compile(
     re.IGNORECASE,
 )
 APPROVAL_WAIT = "Waiting for approval "
+PROTECTED_CHECK = "orkestr protected path check"
+PATH_APPROVAL = "Change files under approval paths"
 
 
 class StopRun(Exception):
@@ -84,6 +88,10 @@ class Engine:
         self.cancel = CancelToken()
         self.run_id: int | None = None
         self._calls_lock = threading.Lock()
+        # Replaced by _load_settings when a run starts or continues.
+        self.team = tm.default_team()
+        self.policy = pol.empty_policy()
+        self.policy_version = 0
 
     # ------------------------------------------------------------------
     # Run lifecycle
@@ -98,6 +106,7 @@ class Engine:
             watcher.start()
             try:
                 try:
+                    self._load_settings()
                     self._loop(goal)
                     status, reason = self._final_status()
                 except StopRun as stop:
@@ -151,6 +160,44 @@ class Engine:
             (redact(goal) if goal else None, json.dumps(options), now()),
         )
 
+    def _load_settings(self):
+        """Team and policy in force from now until this invocation ends (PHASE4_IMPLEMENTATION.md
+        §5.3, §6.4). Taken whenever a run starts or continues, never in the middle of a step, and
+        recorded on the run with a history event."""
+        self.team = self.store.team()
+        p = self.store.policy()
+        self.policy, self.policy_version = p["policy"], p["version"]
+        options = json.loads(self.store.query("SELECT options_json FROM workflow_run WHERE id = ?", (self.run_id,))[0]["options_json"] or "{}")
+        options["team"] = tm.differences(self.team)
+        self.store.execute("UPDATE workflow_run SET options_json = ?, policy_version = ? WHERE id = ?", (json.dumps(options), self.policy_version, self.run_id))
+        self.project.mutate(
+            lambda s: st.emit(s, "run.settings", entity=f"run {self.run_id}", summary=f"policy v{self.policy_version}, team changes: {', '.join(options['team']) or 'none'}", data={"policy_version": self.policy_version, "team": options["team"]}),
+            run_id=self.run_id,
+            export=False,
+        )
+        if self.policy_version >= 1:
+            self._apply_policy_limits()
+
+    def _apply_policy_limits(self):
+        """Policy limits replace the project limits; a limit left out of the policy is the
+        Phase 3 default again (PHASE4_IMPLEMENTATION.md §13)."""
+        state = self.store.load()
+        current = state.project["limits"]
+        wanted = {**current, **DEFAULT_LIMITS, **CORE_LIMITS, **(self.policy.get("limits") or {})}
+        if "max_reported_cost_usd_per_run" not in (self.policy.get("limits") or {}):
+            wanted.pop("max_reported_cost_usd_per_run", None)
+        if wanted == current:
+            return
+        conflicts = pol.limit_conflicts(state.tasks, wanted)
+        if conflicts:
+            raise StopRun("WAITING_FOUNDER", f"policy v{self.policy_version} limits conflict with existing tasks: {'; '.join(conflicts)}")
+
+        def apply(s):
+            s.project["limits"] = wanted
+            st.emit(s, "project.limits", entity="project", summary=f"Limits from policy v{self.policy_version}", data={"from": current, "to": wanted})
+
+        self.project.mutate(apply, run_id=self.run_id)
+
     def retro(self, scope: str | None = None) -> dict:
         """One bounded retrospective call over the project history (PHASE4_IMPLEMENTATION.md §4,
         step 0.2). It is its own run (kind `retro`) and never continues or supersedes a workflow run.
@@ -169,6 +216,7 @@ class Engine:
             retro_id = None
             try:
                 try:
+                    self._load_settings()
                     retro_id = self._retro(scope)
                     status, reason = "COMPLETED", None
                 except StopRun as stop:
@@ -299,21 +347,29 @@ class Engine:
 
     def _request(self, kind: str, role: str, prompt: str, profile: str, task: dict | None) -> AgentRequest:
         agent = self.agents[role]
+        row = self.team.get(role) or tm.default_role(role)
         return AgentRequest(
             role=role,
             kind=kind,
             prompt=prompt,
-            system_prompt=agent.prompt,
+            system_prompt=tm.system_prompt(agent.prompt, row),
             cwd=str(self.root),
             tools=profile,  # type: ignore[arg-type]
             output_schema=schema_for(kind),
             scope=list(task.get("scope") or []) if task else [],
-            max_turns=agent.max_turns,
+            max_turns=tm.effective_max_turns(row, agent.max_turns),
             timeout_s=self.agent_timeout_s,
-            model=self.model,
-            test_command_rules=vf.permission_rules(),
+            model=tm.effective_model(row, self.model),
+            test_command_rules=vf.permission_rules(self._test_commands()),
             task_id=task["id"] if task else None,
+            denied_paths=list(self.policy.get("protected_paths") or []),
         )
+
+    def _test_commands(self) -> list[str]:
+        return list(self.policy.get("test_commands") or [])
+
+    def _enabled(self, role: str) -> bool:
+        return (self.team.get(role) or tm.default_role(role))["enabled"]
 
     def _record_execution(self, step_id: int, req: AgentRequest, result: AgentResult, started: str, duration_ms: int) -> int:
         with self._calls_lock:
@@ -403,6 +459,7 @@ class Engine:
                 continue
             if self._plan_decisions(state):
                 continue
+            self._check_team(state)
 
             pending_verify = self._pending_verify(state)
             if pending_verify:
@@ -419,6 +476,8 @@ class Engine:
             recovery = [t for t in state.tasks if self._needs_recovery(state, t)]
             if recovery:
                 self._recovery_meeting(recovery[0])
+                continue
+            if self._request_path_approvals(state):
                 continue
             wave = [t for t in st.parallel_candidates(state) if t["owner"] != "founder"]
             if wave:
@@ -455,7 +514,9 @@ class Engine:
         role = "product-manager"
         with self.step("plan", input_data={"goal": goal}) as s:
             self._reserve_calls([None])
-            req = self._request("plan", role, prompts.plan_prompt(project, prd.exists(), vf.TEST_COMMAND_FORMS), "read_only", None)
+            owners = [r for r in tm.enabled_roles(self.team) if r in self.agents]
+            prompt = prompts.plan_prompt(project, prd.exists(), vf.command_forms(self._test_commands()), owners, self.policy.get("protected_paths"))
+            req = self._request("plan", role, prompt, "read_only", None)
             out = self._execute(s["id"], req)
             if out.output is None:
                 raise StopRun("WAITING_FOUNDER", f"planning failed: {out.error}")
@@ -496,9 +557,14 @@ class Engine:
             problems.append("at least one task needs a file scope")
         for i, t in enumerate(tasks):
             for c in t.get("verify") or []:
-                p = vf.command_problem(c)
+                p = vf.command_problem(c, self._test_commands())
                 if p:
                     problems.append(f"task #{i + 1} verify command {c!r}: {p}")
+            if t.get("owner") in AGENT_ROLES and not self._enabled(t["owner"]):
+                problems.append(f"task #{i + 1} owner {t['owner']} is not in this project's team (enabled: {', '.join(tm.enabled_roles(self.team))})")
+            hit = pol.protected_overlap(t["scope"], self.policy) if t.get("scope") else []
+            if hit and t.get("owner") != "founder":
+                problems.append(f"task #{i + 1} scope may touch protected paths {', '.join(hit)}; narrow the scope")
         for i, d in enumerate(plan.get("decisions_needed") or []):
             for ref in d.get("blocks") or []:
                 if not re.fullmatch(r"#[1-9]\d*", ref) or int(ref[1:]) > len(tasks):
@@ -532,7 +598,7 @@ class Engine:
         requests: dict[str, AgentRequest] = {}
         for t in tasks:
             fix = self._fix_context(state, t)
-            prompt = prompts.implement_prompt(t, fix, resumed[t["id"]] is not None, vf.TEST_COMMAND_FORMS)
+            prompt = prompts.implement_prompt(t, fix, resumed[t["id"]] is not None, vf.command_forms(self._test_commands()))
             role = t["owner"] if t["owner"] in self.agents else "tech-lead"  # orchestrator-owned work goes to the tech lead
             requests[t["id"]] = self._request("implement", role, prompt, "implement", t)
 
@@ -647,6 +713,12 @@ class Engine:
                     notes.append(f"Reported as changed but not changed on disk: {', '.join(missing)}")
                 if notes:
                     self.project.mutate(lambda s_: st.add_note(s_, tid, author=task["owner"], text=" | ".join(notes)[:4000]), run_id=self.run_id)
+                protected = pol.protected_files(files, self.policy)
+                if protected:
+                    self._evidence(tid, "check", "failed", PROTECTED_CHECK, f"Protected files changed (policy v{self.policy_version}): {', '.join(protected)}; revert them")
+                    self.log(f"{tid}: protected files changed {', '.join(protected)}")
+                    s["result"] = {"protected": protected}
+                    continue
                 if files:
                     r = self.project.mutate(lambda s_: st.scope_check(s_, files, tid), run_id=self.run_id)
                     if r["violations"]:
@@ -654,17 +726,18 @@ class Engine:
                         s["result"] = {"scope_violations": [v["file"] for v in r["violations"]]}
                         continue
                 commands = list(dict.fromkeys([*(task.get("verify") or []), *(output.get("test_commands") or [])]))
-                runnable = [c for c in commands if not vf.command_problem(c)]
-                rejected = [f"`{c}`: {vf.command_problem(c)}" for c in commands if vf.command_problem(c)]
+                extra = self._test_commands()
+                runnable = [c for c in commands if not vf.command_problem(c, extra)]
+                rejected = [f"`{c}`: {vf.command_problem(c, extra)}" for c in commands if vf.command_problem(c, extra)]
                 if rejected:
                     self.project.mutate(lambda s_: st.add_note(s_, tid, author="orchestrator", text="Not run: " + "; ".join(rejected)), run_id=self.run_id)
                 if not runnable:
-                    self._evidence(tid, "check", "failed", "verification", "No runnable verification command was given (allowed forms: " + ", ".join(vf.TEST_COMMAND_FORMS) + ")")
+                    self._evidence(tid, "check", "failed", "verification", "No runnable verification command was given (allowed forms: " + ", ".join(vf.command_forms(extra)) + ")")
                     s["result"] = {"commands": []}
                     continue
                 ran = []
                 for c in runnable:
-                    res = vf.run_test_command(self.root, c, self.test_timeout_s, self.cancel)
+                    res = vf.run_test_command(self.root, c, self.test_timeout_s, self.cancel, extra)
                     trid = self.store.record_test_result(tid, c, res.exit_code, res.duration_ms, res.timed_out, res.output_tail, "core")
                     summary = (
                         f"exit {res.exit_code} in {res.duration_ms} ms"
@@ -703,7 +776,7 @@ class Engine:
             return
         reviewers = ["qa-engineer" if task["owner"] != "qa-engineer" else "tech-lead"]
         text = " ".join([task["title"], task.get("description") or "", *(task.get("scope") or [])])
-        if SECURITY_TRIGGER.search(text) and task["owner"] != "security-reviewer":
+        if (SECURITY_TRIGGER.search(text) or pol.security_review(task.get("scope"), self.policy)) and task["owner"] != "security-reviewer":
             reviewers.append("security-reviewer")
         checks = []
         for e in task["evidence"][last_review + 1 :]:
@@ -778,8 +851,11 @@ class Engine:
         )
 
     def _participants(self, owner: str) -> list[dict]:
-        lead = "tech-lead" if owner != "tech-lead" else "system-architect"
-        owner = owner if owner in self.agents else "backend-engineer"
+        """The implementer's seat and a lead, both from the enabled team. A disabled or non-agent
+        owner's seat goes to the tech lead (PHASE4_IMPLEMENTATION.md §5.2)."""
+        if owner not in self.agents or not self._enabled(owner):
+            owner = "backend-engineer" if owner not in AGENT_ROLES and self._enabled("backend-engineer") else "tech-lead"
+        lead = "tech-lead" if owner != "tech-lead" else ("system-architect" if self._enabled("system-architect") else "qa-engineer")
         return [
             {"role": owner, "responsibility": "the implementer of the task"},
             {"role": lead, "responsibility": "technical direction and trade-offs"},
@@ -852,6 +928,7 @@ class Engine:
                 elif task_ids:
                     draft["applies_to"] = task_ids
                 try:
+                    self._check_action_items(draft["action_items"])
                     result = self.project.mutate(lambda s_: rec.record_meeting(s_, draft), run_id=self.run_id)
                     break
                 except OrkestrError as err:
@@ -935,6 +1012,41 @@ class Engine:
 
         a = self.project.mutate(apply, run_id=self.run_id)
         self.log(f"{tid}: needs founder approval {a['id']} ({a['action']})")
+
+    def _check_action_items(self, items: list[dict]):
+        """Meeting action items follow the same team and policy rules as plan tasks."""
+        problems = []
+        for i, a in enumerate(items):
+            if a.get("owner") in AGENT_ROLES and not self._enabled(a["owner"]):
+                problems.append(f"action item {i + 1} owner {a['owner']} is not in this project's team")
+            hit = pol.protected_overlap(a["scope"], self.policy) if a.get("scope") else []
+            if hit and a.get("owner") != "founder":
+                problems.append(f"action item {i + 1} scope may touch protected paths {', '.join(hit)}")
+        if problems:
+            raise OrkestrError("; ".join(problems))
+
+    def _check_team(self, state: st.State):
+        """Open tasks owned by a disabled role are not reassigned silently (§5.2)."""
+        orphans = [t for t in state.tasks if t["status"] not in st.TERMINAL and t["owner"] in AGENT_ROLES and not self._enabled(t["owner"])]
+        if orphans:
+            names = ", ".join(f"{t['id']} ({t['owner']})" for t in orphans)
+            raise StopRun("WAITING_FOUNDER", f"tasks owned by roles that are disabled in the team: {names}; re-enable the role or change the tasks")
+
+    def _request_path_approvals(self, state: st.State) -> bool:
+        """READY tasks whose scope touches the policy's approval paths ask the founder first (§6.2)."""
+        asked = False
+        for t in state.tasks:
+            if t["status"] != "READY" or t["owner"] == "founder" or not pol.needs_approval(t.get("scope"), self.policy):
+                continue
+            if any(a.get("task_id") == t["id"] and a["action"].startswith(PATH_APPROVAL) for a in state.approvals):
+                continue  # already asked; a granted one lets the task start, a rejected one keeps it blocked
+            paths = ", ".join(self.policy["approval_paths"])
+            self._request_approval(
+                t["id"],
+                {"action": f"{PATH_APPROVAL} ({paths}) for {t['id']}: {t['title']}", "category": "other", "reason": f"Policy v{self.policy_version} requires founder approval for changes under {paths}"},
+            )
+            asked = True
+        return asked
 
     def _unblock_approved(self, state: st.State) -> bool:
         ready = []

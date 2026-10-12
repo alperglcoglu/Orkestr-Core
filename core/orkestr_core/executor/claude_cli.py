@@ -63,16 +63,21 @@ def allowed_tools(profile: str, test_rules: list[str]) -> list[str]:
     return tools
 
 
-def guard_settings() -> dict:
-    """PreToolUse hook running the plugin's guard. Under dontAsk an "ask" becomes a denial."""
+def guard_settings(denied_paths: list[str] | None = None) -> dict:
+    """PreToolUse hook running the plugin's guard. Under dontAsk an "ask" becomes a denial.
+    Protected paths from the policy become deny rules for the file tools (a guardrail only;
+    the core's own Git check after the call is the enforcement)."""
     guard = (PLUGIN_DIR / "scripts" / "guard.mjs").as_posix()
-    return {
+    settings: dict = {
         "hooks": {
             "PreToolUse": [
                 {"matcher": "Bash|PowerShell|Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": f'node "{guard}"'}]}
             ]
         }
     }
+    if denied_paths:
+        settings["permissions"] = {"deny": [f"{tool}({p})" for p in denied_paths for tool in ("Edit", "Write")]}
+    return settings
 
 
 def build_command(binary: str, req: AgentRequest, system_prompt_file: str, settings_file: str) -> list[str]:
@@ -268,7 +273,7 @@ class ClaudeCliExecutor:
             sys_file = Path(tmp) / "system-prompt.md"
             sys_file.write_text(request.system_prompt, encoding="utf-8")
             settings_file = Path(tmp) / "settings.json"
-            settings_file.write_text(json.dumps(guard_settings()), encoding="utf-8")
+            settings_file.write_text(json.dumps(guard_settings(request.denied_paths)), encoding="utf-8")
             cmd = build_command(self.binary, request, str(sys_file), str(settings_file))
             env = {k: v for k, v in os.environ.items() if k not in PARENT_SESSION_ENV}
             code, out, err, stop = run_process(cmd, request.cwd, request.prompt, request.timeout_s, cancel, env=env)

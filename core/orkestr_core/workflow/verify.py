@@ -35,18 +35,28 @@ SHELL_META = re.compile(r"[;&|<>`$]|\r|\n")
 OUTPUT_TAIL = 8 * 1024
 
 
-def permission_rules() -> list[str]:
-    return [rule for _, rule in TEST_COMMANDS] + ["npm test"]
+def command_forms(extra: list[str] | tuple = ()) -> list[str]:
+    """The allowed forms for prompts: the defaults plus the policy's test commands."""
+    return [*TEST_COMMAND_FORMS, *(f"{e} …" for e in extra)]
 
 
-def command_problem(command: str) -> str | None:
+def permission_rules(extra: list[str] | tuple = ()) -> list[str]:
+    rules = [rule for _, rule in TEST_COMMANDS] + ["npm test"]
+    for e in extra:
+        rules += [e, f"{e} *"]
+    return rules
+
+
+def command_problem(command: str, extra: list[str] | tuple = ()) -> str | None:
+    """`extra` are the policy's test command prefixes (PHASE4_IMPLEMENTATION.md §6.2), already
+    checked by domain/policy.py; a command matches one when it is the prefix or starts with it."""
     c = command.strip()
     if not c:
         return "empty command"
     if SHELL_META.search(c):
         return "shell operators are not allowed; use one exact command"
-    if not any(p.match(c) for p, _ in TEST_COMMANDS):
-        return f"not an allowed test command (allowed: {', '.join(TEST_COMMAND_FORMS)})"
+    if not any(p.match(c) for p, _ in TEST_COMMANDS) and not any(c == e or c.startswith(e + " ") for e in extra):
+        return f"not an allowed test command (allowed: {', '.join(command_forms(extra))})"
     return None
 
 
@@ -134,8 +144,8 @@ def _resolve(argv: list[str]) -> list[str]:
     return argv
 
 
-def run_test_command(root: Path, command: str, timeout_s: int, cancel: CancelToken | None = None) -> CommandResult:
-    problem = command_problem(command)
+def run_test_command(root: Path, command: str, timeout_s: int, cancel: CancelToken | None = None, extra: list[str] | tuple = ()) -> CommandResult:
+    problem = command_problem(command, extra)
     if problem:
         return CommandResult(command, None, 0, False, "", False, error=problem)
     argv = _resolve(shlex.split(command, posix=True))

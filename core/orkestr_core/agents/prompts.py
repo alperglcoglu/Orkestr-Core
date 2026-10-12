@@ -31,7 +31,10 @@ def _task_block(task: dict) -> str:
     return "\n".join(lines)
 
 
-def plan_prompt(project: dict, prd_exists: bool, allowed_tests: list[str]) -> str:
+def plan_prompt(project: dict, prd_exists: bool, allowed_tests: list[str], owners: list[str] | None = None, protected: list[str] | None = None) -> str:
+    team = f"\n  Owner roles in this project's team: {', '.join(owners)} (and founder)." if owners else ""
+    if protected:
+        team += f"\n  Protected paths no task may change (keep them out of every scope): {', '.join(protected)}."
     return f"""{COMMON}
 Step: PLAN.
 Goal from the founder: {project['goal']}
@@ -45,7 +48,7 @@ Read the repository to understand what exists. Then return:
   testable acceptance criteria, a file scope (path patterns such as "src/**"), and at least one
   exact verification command. Allowed test command forms: {', '.join(allowed_tests)}.
   Use depends_on with "#n" for the n-th task in your list. Tasks with disjoint scopes can run
-  in parallel. Set requires_approval only for restricted actions.
+  in parallel. Set requires_approval only for restricted actions.{team}
 - decisions_needed: design choices the goal leaves open and the team must settle before some
   tasks start (question, at least two options, and "#n" for each task that must wait). The
   team holds a meeting on each one; product, budget, legal, or security-policy matters still

@@ -53,3 +53,33 @@ def test_usage_errors_exit_with_2(tmp_path, capsys):
     run(capsys, "--project", str(tmp_path), "init", "--name", "x", "--goal", "y")
     code, _, err = run(capsys, "--project", str(tmp_path), "approve", "X-1")
     assert code == 2 and "Pass an approval" in err
+
+
+def test_team_policy_and_autonomy_commands(tmp_path, capsys):
+    d = str(tmp_path)
+    run(capsys, "--project", d, "init", "--name", "x", "--goal", "y")
+    notes = tmp_path / "qa.txt"
+    notes.write_text("Check edge cases first.\n", encoding="utf-8")
+    code, out, _ = run(capsys, "--project", d, "team", "set", "qa-engineer", "--model", "opus", "--max-turns", "5", "--instructions-file", str(notes))
+    assert code == 0 and "on  qa-engineer  (model opus, max turns 5, instructions)" in out
+    code, out, _ = run(capsys, "--project", d, "team", "set", "ml-engineer", "--disable")
+    assert code == 0 and "off ml-engineer" in out
+    code, _, err = run(capsys, "--project", d, "team", "set", "tech-lead", "--disable")
+    assert code == 1 and "cannot be disabled" in err
+    code, out, _ = run(capsys, "--project", d, "team", "set", "qa-engineer", "--model", "", "--max-turns", "0")
+    assert code == 0 and "on  qa-engineer  (instructions)" in out
+
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({"protected_paths": ["LICENSE"], "limits": {"max_fix_attempts": 2}}), encoding="utf-8")
+    code, out, _ = run(capsys, "--project", d, "policy", "set", str(policy), "--reason", "keep the license")
+    assert code == 0 and "version 1" in out
+    code, out, _ = run(capsys, "--project", d, "policy", "show")
+    assert code == 0 and '"LICENSE"' in out and "Policy version 1 (keep the license)" in out
+    policy.write_text(json.dumps({"limits": {"max_parallel_tasks": 99}}), encoding="utf-8")
+    code, _, err = run(capsys, "--project", d, "policy", "set", str(policy), "--reason", "faster")
+    assert code == 1 and "from 1 to 4" in err
+    code, out, _ = run(capsys, "--project", d, "policy", "history")
+    assert code == 0 and "v0" in out and "v1" in out and "v2" not in out
+
+    code, out, _ = run(capsys, "--project", d, "autonomy", "supervised", "--reason", "review plans")
+    assert code == 0 and Project(tmp_path).store.load().project["autonomy"] == "supervised"

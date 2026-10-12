@@ -203,6 +203,8 @@ class Project:
         if not non_empty(reason):
             raise OrkestrError("A reason is required to change the policy.", "E_USAGE")
         problems = pol.policy_problems(policy)
+        limits = policy.get("limits") if isinstance(policy, dict) and isinstance(policy.get("limits"), dict) else {}
+        problems += pol.limit_conflicts(self.store.load().tasks, {**DEFAULT_LIMITS, **limits})
         if problems:
             raise OrkestrError("Policy rejected: " + "; ".join(problems), "E_POLICY")
         return self.store.save_policy(pol.normalize(policy), reason)

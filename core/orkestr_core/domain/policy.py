@@ -147,3 +147,14 @@ def needs_approval(scope: list[str] | None, policy: dict) -> bool:
 def security_review(scope: list[str] | None, policy: dict) -> bool:
     paths = policy.get("security_review_paths") or []
     return bool(paths) and bool(scope) and scopes_overlap(scope, paths)
+
+
+def limit_conflicts(tasks: list[dict], limits: dict) -> list[str]:
+    """Tasks that already went past a lowered limit; the Phase 1 validator would reject them."""
+    out = []
+    for t in tasks:
+        if t["fix_attempts"] > limits.get("max_fix_attempts", t["fix_attempts"]):
+            out.append(f"{t['id']} has {t['fix_attempts']} fix attempts (max_fix_attempts {limits['max_fix_attempts']})")
+        if t.get("recovery_meetings", 0) > limits.get("max_recovery_meetings", t.get("recovery_meetings", 0)):
+            out.append(f"{t['id']} had {t['recovery_meetings']} recovery meetings (max_recovery_meetings {limits['max_recovery_meetings']})")
+    return out
