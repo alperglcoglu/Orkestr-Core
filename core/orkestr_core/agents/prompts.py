@@ -46,6 +46,11 @@ Read the repository to understand what exists. Then return:
   exact verification command. Allowed test command forms: {', '.join(allowed_tests)}.
   Use depends_on with "#n" for the n-th task in your list. Tasks with disjoint scopes can run
   in parallel. Set requires_approval only for restricted actions.
+- decisions_needed: design choices the goal leaves open and the team must settle before some
+  tasks start (question, at least two options, and "#n" for each task that must wait). The
+  team holds a meeting on each one; product, budget, legal, or security-policy matters still
+  go to the founder from there. Do not create founder-owned tasks for such choices. A task is
+  owned by "founder" only when nobody else can do it (credentials, accounts, purchases, legal).
 """
 
 

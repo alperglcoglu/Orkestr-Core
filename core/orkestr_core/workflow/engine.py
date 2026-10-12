@@ -401,6 +401,8 @@ class Engine:
                 self._plan(goal)
                 planned = True
                 continue
+            if self._plan_decisions(state):
+                continue
 
             pending_verify = self._pending_verify(state)
             if pending_verify:
@@ -470,8 +472,20 @@ class Engine:
                 write_atomic(prd, plan["prd_markdown"].rstrip() + "\n")
                 self.store.record_artifact("requirements/prd.md", "prd", prd.read_text(encoding="utf-8"), role)
             tasks = self.project.mutate(lambda s_: st.import_plan(s_, {"summary": plan["summary"], "tasks": plan["tasks"]}), run_id=self.run_id)
-            s["result"] = {"task_ids": [t["id"] for t in tasks]}
+            decisions = [
+                {
+                    "key": f"plan-{s['id']}-{i + 1}",
+                    "question": d["question"],
+                    "options": d["options"],
+                    "context": d.get("context") or "",
+                    "task_ids": [tasks[int(ref[1:]) - 1]["id"] for ref in dict.fromkeys(d["blocks"])],
+                }
+                for i, d in enumerate(plan.get("decisions_needed") or [])
+            ]
+            s["result"] = {"task_ids": [t["id"] for t in tasks], "decisions": decisions}
             self.log(f"Planned {len(tasks)} task(s): {', '.join(t['id'] for t in tasks)}")
+            for d in decisions:
+                self.log(f"Open design choice before {', '.join(d['task_ids'])}: {d['question']}")
 
     def _plan_problems(self, plan: dict) -> list[str]:
         problems = []
@@ -485,6 +499,10 @@ class Engine:
                 p = vf.command_problem(c)
                 if p:
                     problems.append(f"task #{i + 1} verify command {c!r}: {p}")
+        for i, d in enumerate(plan.get("decisions_needed") or []):
+            for ref in d.get("blocks") or []:
+                if not re.fullmatch(r"#[1-9]\d*", ref) or int(ref[1:]) > len(tasks):
+                    problems.append(f"decisions_needed[{i + 1}] blocks {ref!r}: use \"#n\" for a task of this plan (1–{len(tasks)})")
         try:
             st.create_tasks(self.store.load(), tasks, {"type": "plan", "ref": None})  # a throwaway copy
         except OrkestrError as err:
@@ -767,13 +785,13 @@ class Engine:
             {"role": lead, "responsibility": "technical direction and trade-offs"},
         ]
 
-    def _meeting(self, meeting: dict, task_ids: list[str], recovery_for: str | None) -> dict:
+    def _meeting(self, meeting: dict, task_ids: list[str], recovery_for: str | None, key: str | None = None) -> dict:
         """Runs rounds and the synthesis, then records the meeting. Returns the record result."""
         limits = self.store.load().project["limits"]
         participants = meeting["participants"]
         contributions: list[dict] = []
-        task = st.get_task(self.store.load(), task_ids[0]) if task_ids else None
-        with self.step("meeting", task_id=task_ids[0] if task_ids else None, input_data={"objective": meeting["objective"]}) as s:
+        input_data = {"objective": meeting["objective"], **({"key": key} if key else {})}
+        with self.step("meeting", task_id=task_ids[0] if task_ids else None, input_data=input_data) as s:
             rounds = []
             for round_no in range(1, limits["max_discussion_rounds"] + 1):
                 self._check_control()
@@ -870,6 +888,41 @@ class Engine:
             "options": [{"id": f"O{i + 1}", "name": o, "summary": ""} for i, o in enumerate(need["options"])],
         }
         self._meeting(meeting, [tid], recovery_for=None)
+
+    def _plan_decisions(self, state: st.State) -> bool:
+        """Design choices the plan left open are settled in a meeting before the tasks they block
+        start. Each one is held once per run (found again by its key after a restart). A decision
+        that waits for the founder stops the run; no decision or a rejected one lets the tasks go
+        ahead, and an implementer can still raise the choice again with decision_needed."""
+        rows = self.store.query("SELECT result_json FROM workflow_step WHERE run_id = ? AND kind = 'plan' AND status = 'DONE' ORDER BY id", (self.run_id,))
+        held = {}
+        for m in self.store.query("SELECT input_json, result_json FROM workflow_step WHERE run_id = ? AND kind = 'meeting' AND status = 'DONE'", (self.run_id,)):
+            key = json.loads(m["input_json"] or "{}").get("key")
+            if key:
+                held[key] = json.loads(m["result_json"] or "{}")
+        for row in rows:
+            for need in json.loads(row["result_json"] or "{}").get("decisions") or []:
+                open_ids = [tid for tid in need["task_ids"] if (t := st.find_task(state, tid)) and t["status"] not in st.TERMINAL]
+                if not open_ids:
+                    continue
+                if need["key"] not in held:
+                    self._plan_decision_meeting(need, open_ids, state)
+                    return True
+                d = state.decisions.get(held[need["key"]].get("decision") or "")
+                if d and d["approval_status"] in ("PROPOSED", "NEEDS_FOUNDER"):
+                    raise StopRun("WAITING_FOUNDER", f"decide {d['id']}: {d['question']}")
+        return False
+
+    def _plan_decision_meeting(self, need: dict, task_ids: list[str], state: st.State):
+        owner = st.get_task(state, task_ids[0])["owner"]
+        meeting = {
+            "objective": need["question"],
+            "context": (need["context"] + " " if need["context"] else "") + f"The plan left this open; {', '.join(task_ids)} wait for it.",
+            "trigger": "A design choice the plan left open blocks tasks (MASTER_SPEC §6.1)",
+            "participants": self._participants(owner),
+            "options": [{"id": f"O{i + 1}", "name": o, "summary": ""} for i, o in enumerate(need["options"])],
+        }
+        self._meeting(meeting, task_ids, recovery_for=None, key=need["key"])
 
     # ------------------------------------------------------------------
     # Approvals
