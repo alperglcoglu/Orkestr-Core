@@ -115,16 +115,23 @@ class Engine:
             self.log(f"Run {self.run_id} {status}{': ' + reason if reason else ''}")
             return self.store.query("SELECT * FROM workflow_run WHERE id = ?", (self.run_id,))[0]
 
-    def _open_run(self, goal: str | None) -> int:
-        # Any RUNNING run belongs to a process that is gone (we hold the lock now).
-        for r in self.store.query("SELECT id FROM workflow_run WHERE status = 'RUNNING'"):
+    def _close_interrupted(self):
+        """Any RUNNING run belongs to a process that is gone (we hold the lock now). Workflow
+        runs are continued; other kinds (a retro) are closed as failed."""
+        for r in self.store.query("SELECT id, kind FROM workflow_run WHERE status = 'RUNNING'"):
             self.store.execute(
                 "UPDATE workflow_step SET status = 'FAILED', error = 'interrupted', ended_at = ? WHERE run_id = ? AND status IN ('RUNNING', 'PENDING')",
                 (now(), r["id"]),
             )
-            self.log(f"Run {r['id']} was interrupted; continuing it.")
+            if r["kind"] == "run":
+                self.log(f"Run {r['id']} was interrupted; continuing it.")
+            else:
+                self.store.execute("UPDATE workflow_run SET status = 'FAILED', status_reason = 'interrupted', ended_at = ? WHERE id = ?", (now(), r["id"]))
+
+    def _open_run(self, goal: str | None) -> int:
+        self._close_interrupted()
         latest = self.store.query(
-            "SELECT * FROM workflow_run WHERE status IN ('RUNNING', 'PAUSED', 'WAITING_FOUNDER') ORDER BY id DESC LIMIT 1"
+            "SELECT * FROM workflow_run WHERE kind = 'run' AND status IN ('RUNNING', 'PAUSED', 'WAITING_FOUNDER') ORDER BY id DESC LIMIT 1"
         )
         options = {"model": self.model, "max_agent_calls": self.max_agent_calls_override}
         if latest and not goal:
@@ -143,6 +150,56 @@ class Engine:
             "INSERT INTO workflow_run (kind, goal, status, options_json, started_at) VALUES ('run', ?, 'RUNNING', ?, ?)",
             (redact(goal) if goal else None, json.dumps(options), now()),
         )
+
+    def retro(self, scope: str | None = None) -> dict:
+        """One bounded retrospective call over the project history (PHASE4_IMPLEMENTATION.md §4,
+        step 0.2). It is its own run (kind `retro`) and never continues or supersedes a workflow run.
+        It ends COMPLETED, FAILED, or CANCELLED, so `run` never resumes it."""
+        with RunLock(self.project.dir / LOCK_FILE):
+            self.cancel = CancelToken()
+            self._sync_agent_definitions()
+            self._close_interrupted()
+            options = {"model": self.model, "max_agent_calls": self.max_agent_calls_override}
+            self.run_id = self.store.execute(
+                "INSERT INTO workflow_run (kind, goal, status, options_json, started_at) VALUES ('retro', ?, 'RUNNING', ?, ?)",
+                (redact(scope) if scope else None, json.dumps(options), now()),
+            )
+            watcher = threading.Thread(target=self._watch_control, daemon=True)
+            watcher.start()
+            retro_id = None
+            try:
+                try:
+                    retro_id = self._retro(scope)
+                    status, reason = "COMPLETED", None
+                except StopRun as stop:
+                    status = "CANCELLED" if stop.status == "CANCELLED" else "FAILED"
+                    reason = stop.reason
+                except OrkestrError as err:
+                    status, reason = "FAILED", err.message
+                except Exception as err:  # noqa: BLE001 - recorded on the run, then re-raised
+                    self._close_run("FAILED", f"unexpected error: {err}", None)
+                    raise
+            finally:
+                self.cancel.cancel()
+            self._close_run(status, reason, None)
+            self.log(f"Retro run {self.run_id} {status}{': ' + reason if reason else ''}")
+            return {**self.store.query("SELECT * FROM workflow_run WHERE id = ?", (self.run_id,))[0], "retro_id": retro_id}
+
+    def _retro(self, scope: str | None) -> str:
+        state = self.store.load()
+        scope = scope or f"{state.project['name']}: {state.project['goal']}"
+        with self.step("retro", input_data={"scope": scope}) as s:
+            self._reserve_calls([None])
+            summary = retro_summary(state, self.store.history(), self.project.usage())
+            req = self._request("retro", "tech-lead", prompts.retro_prompt(f"Scope: {scope}\n\n{summary}"), "read_only", None)
+            out = self._execute(s["id"], req)
+            if out.output is None:
+                raise StopRun("FAILED", f"retrospective failed: {out.error}")
+            draft = {**out.output, "scope": out.output.get("scope") or scope}
+            retro = self.project.mutate(lambda s_: rec.record_retro(s_, draft), run_id=self.run_id)
+            s["result"] = {"retro_id": retro["id"]}
+            self.log(f"Recorded {retro['id']} with {len(retro['lessons'])} lesson(s)")
+            return retro["id"]
 
     def _close_run(self, status: str, reason: str | None, report: str | None):
         self.store.execute(
@@ -858,6 +915,40 @@ class Engine:
         write_atomic(self.project.dir / rel, text)
         self.store.record_artifact(rel, "report", text, "orchestrator")
         return rel
+
+
+RETRO_HISTORY_EVENTS = 80
+RETRO_SUMMARY_CHARS = 24_000
+
+
+def retro_summary(state: st.State, history: list[dict], usage: dict) -> str:
+    """The evidence a retrospective works from: records and recent history, never file contents."""
+    p = state.project
+    lines = [f"Project: {p['name']} — status {p['status']}", f"Goal: {p['goal']}", "", "Tasks:"]
+    for t in state.tasks:
+        lines.append(f"- {t['id']} [{t['status']}] {t['title']} (owner {t['owner']}, fix attempts {t['fix_attempts']}, recovery meetings {t.get('recovery_meetings', 0)})")
+        for e in t["evidence"]:
+            lines.append(f"  - evidence {e['type']}/{e['result']}: {e.get('command') or ''} — {e['summary']}"[:400])
+        if t.get("failure"):
+            lines.append(f"  - failure: {(t['failure'] or {}).get('error')}"[:400])
+    sections = {
+        "Reviews": [f"- {r['id']} on {r.get('task_id')}: {r.get('verdict')} ({len(r.get('findings') or [])} finding(s))" for r in state.reviews.values()],
+        "Meetings": [f"- {m['id']} ({m.get('trigger')}): {m.get('objective')} → {m.get('outcome')}" for m in state.meetings.values()],
+        "Decisions": [f"- {d['id']} [{d['approval_status']}] {d['question']}" for d in state.decisions.values()],
+        "Assumptions": [f"- [{a.get('impact')}] {a['text']}" for a in p.get("assumptions") or []],
+    }
+    for title, items in sections.items():
+        lines += ["", f"{title}:", *(items or ["- (none)"])]
+    lines += [
+        "",
+        f"Agent usage: {usage['calls']} call(s), {usage['failed']} failed, {usage['num_turns']} turn(s), "
+        f"{usage['input_tokens']} input and {usage['output_tokens']} output token(s)",
+        "",
+        f"History (last {RETRO_HISTORY_EVENTS} events):",
+    ]
+    lines += [f"- {h['ts']} {h['type']} {h.get('entity') or ''} {h.get('summary') or ''}"[:300] for h in history[-RETRO_HISTORY_EVENTS:]]
+    text = "\n".join(lines)
+    return text if len(text) <= RETRO_SUMMARY_CHARS else text[:RETRO_SUMMARY_CHARS] + "\n(truncated)"
 
 
 def request_control(project: Project, action: str, reason: str | None = None) -> str:

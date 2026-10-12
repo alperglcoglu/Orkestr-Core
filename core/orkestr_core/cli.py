@@ -64,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("--model", default=None)
         s.add_argument("--max-agent-calls", type=int, default=None)
 
+    s = sub.add_parser("retro", help="run one retrospective agent call over the project history")
+    s.add_argument("--scope", default=None, help="what the retrospective covers (default: the project goal)")
+    s.add_argument("--executor", default="claude", choices=["claude"])
+    s.add_argument("--model", default=None)
+    s.add_argument("--max-agent-calls", type=int, default=None)
+
     s = sub.add_parser("pause", help="pause after the current step")
     s.add_argument("--reason", default=None)
     s = sub.add_parser("cancel", help="cancel the open run (or, with --project-cancel, the whole project)")
@@ -131,6 +137,13 @@ def _dispatch(project: Project, args) -> int:
         run = _engine(project, args).run(getattr(args, "goal", None))
         print(project.report_text(run_id=run["id"]))
         return 0 if run["status"] in ("COMPLETED", "WAITING_FOUNDER", "PAUSED") else 1
+    if cmd == "retro":
+        run = _engine(project, args).retro(args.scope)
+        if run["retro_id"]:
+            print((project.dir / "retros" / f"{run['retro_id']}.md").read_text(encoding="utf-8"))
+            return 0
+        print(f"orkestr-core: retrospective {run['status']}: {run['status_reason']}", file=sys.stderr)
+        return 1
     if cmd == "pause":
         from .workflow.engine import request_control
 

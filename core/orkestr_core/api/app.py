@@ -131,6 +131,11 @@ class RunBody(BaseModel):
     model: str | None = None
 
 
+class RetroBody(BaseModel):
+    scope: str | None = None
+    model: str | None = None
+
+
 def create_app(project: Project, engine_factory: Callable[[RunBody], Any] | None = None) -> FastAPI:
     token = project.token()
     app = FastAPI(title="Orkestr core", version="0.1.0", description="Local API of the Orkestr standalone core.")
@@ -181,6 +186,10 @@ def create_app(project: Project, engine_factory: Callable[[RunBody], Any] | None
         if not d:
             raise HTTPException(status_code=404, detail=f"Unknown decision: {decision_id}")
         return d
+
+    @app.get("/retros", response_model=list[dict[str, Any]], dependencies=deps)
+    def retros():
+        return sorted(project.store.load().retros.values(), key=lambda r: r["id"])
 
     @app.get("/approvals", response_model=list[Approval], dependencies=deps)
     def approvals():
@@ -252,6 +261,19 @@ def create_app(project: Project, engine_factory: Callable[[RunBody], Any] | None
         worker["thread"] = t
         t.start()
         return {"message": "run started"}
+
+    @app.post("/retros", response_model=Message, status_code=202, dependencies=deps)
+    def start_retro(body: RetroBody | None = None):
+        if engine_factory is None:
+            raise HTTPException(status_code=501, detail="this server was started without an executor")
+        if busy():
+            raise HTTPException(status_code=409, detail="a run is already active")
+        b = body or RetroBody()
+        engine = engine_factory(RunBody(model=b.model))
+        t = threading.Thread(target=lambda: engine.retro(b.scope), daemon=True, name="orkestr-retro")
+        worker["thread"] = t
+        t.start()
+        return {"message": "retrospective started"}
 
     def control(run_id: int, action: str):
         from ..workflow.engine import request_control

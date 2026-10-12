@@ -62,7 +62,8 @@ orkestr-core report
 | `pause`, `resume`, `cancel [--project-cancel --reason R]` | Run control. `cancel` stops running agent processes. Tasks keep their state. |
 | `approve <A-###\|D-###\|plan> [--option O] [--note N]`, `reject <A-###\|D-###> --reason R` | Founder decisions. |
 | `authorize <T-###>`, `retry <T-###>`, `approval-result <A-###> --result R` | Founder actions. |
-| `status`, `report`, `validate` | Reports and validation. |
+| `status`, `report`, `validate` | Reports and validation. The report lists tests and scope checks separately. |
+| `retro [--scope S] [--model M]` | One `tech-lead` agent call (read-only) that reviews the project history and records an `RT-###` retrospective. It is its own run and never continues or replaces a workflow run. |
 | `serve [--port 8765]` | Starts the local API. |
 
 ### Founder consultation
@@ -87,9 +88,9 @@ with `approval-result`.
 is git-ignored, and is never logged. The OpenAPI document is at `/openapi.json`, and
 `/docs` shows it in a browser. Main endpoints:
 
-- `GET /status`, `/report`, `/tasks`, `/tasks/{id}`, `/approvals`, `/runs`, `/runs/{id}/steps`, `/history?after=<ts>`;
+- `GET /status`, `/report`, `/tasks`, `/tasks/{id}`, `/approvals`, `/retros`, `/runs`, `/runs/{id}/steps`, `/history?after=<ts>`;
 - `POST /approvals/{id}/grant|reject`, `/decisions/{id}/approve|reject`, `/tasks/{id}/authorize|retry`;
-- `POST /runs`, `/runs/{id}/pause|resume|cancel`.
+- `POST /runs`, `/runs/{id}/pause|resume|cancel`, `/retros`.
 
 ## Cost and safety
 
@@ -140,5 +141,4 @@ node --test plugins/orkestr/tests/
 - Only one project per database and one local founder. There are no user accounts.
 - Meetings are held for recovery and for design questions raised by an implementer. Other
   MASTER_SPEC §6.1 triggers are not detected automatically yet.
-- Retrospectives are recorded through the domain layer, but `orkestr-core` has no `retro`
-  command yet.
+- `retro` has been tested only with the fake executor so far.

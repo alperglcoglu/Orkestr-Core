@@ -181,7 +181,7 @@ class Project:
         return result
 
     def latest_run(self) -> dict | None:
-        rows = self.store.query("SELECT * FROM workflow_run ORDER BY id DESC LIMIT 1")
+        rows = self.store.query("SELECT * FROM workflow_run WHERE kind = 'run' ORDER BY id DESC LIMIT 1")
         return rows[0] if rows else None
 
     def usage(self, run_id: int | None = None) -> dict:
